@@ -1,6 +1,10 @@
 # Cinema-Booking-System
  Building a Concurrent Cinema Booking System in Golang 
 
+## Rules
+- No AI Writes Code
+- You Can Ask AI but not copy
+- MD files only AI can write it and not for today btw
 
 ### Create Ticket System
 - System must hold tickets

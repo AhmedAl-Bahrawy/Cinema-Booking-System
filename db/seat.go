@@ -11,10 +11,12 @@ const (
 
 type Seat struct {
 	ID         int64
+	UserId     int64
 	HallId     int64
 	SeatNumber uint32
 	Status     BookingStatus
 	Price      uint32
 
+	User *User
 	Hall *Hall
 }

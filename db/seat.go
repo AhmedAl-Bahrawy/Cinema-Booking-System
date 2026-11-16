@@ -14,4 +14,7 @@ type Seat struct {
 	HallId     int64
 	SeatNumber uint32
 	Status     BookingStatus
+	Price      uint32
+
+	Hall *Hall
 }

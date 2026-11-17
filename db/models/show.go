@@ -1,4 +1,4 @@
-package db
+package models
 
 type Show struct {
 	ID              int64  `db:"id"               json:"id"               binding:"omitempty,min=1"`

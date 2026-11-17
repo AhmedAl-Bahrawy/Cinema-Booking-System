@@ -1,4 +1,4 @@
-package db
+package models
 
 // Free (0) | Holding (1) | Booked (2)
 type BookingStatus int8

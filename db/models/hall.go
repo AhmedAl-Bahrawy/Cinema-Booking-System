@@ -16,10 +16,26 @@ func CreateHall(ctx context.Context, pool *pgxpool.Pool, name string, capacity u
 	query := `INSERT INTO halls (name, capacity) VALUES ($1, $2) RETURNING id, name, capacity`
 
 	var hall Hall
-	err := pool.QueryRow(ctx, query, name, capacity).Scan(&hall.ID, &hall.Name, &hall.Capacity)
+	var dbCapacity int64 // scan INTEGER into int64, then convert
+	err := pool.QueryRow(ctx, query, name, capacity).Scan(&hall.ID, &hall.Name, &dbCapacity)
 	if err != nil {
 		return nil, err
 	}
+	hall.Capacity = uint32(dbCapacity)
+
+	return &hall, nil
+}
+
+func GetHallById(ctx context.Context, pool *pgxpool.Pool, id int64) (*Hall, error) {
+	query := `SELECT id, name, capacity FROM halls WHERE id = $1`
+
+	var hall Hall
+	var capacity int64 // scan INTEGER into int64, then convert
+	err := pool.QueryRow(ctx, query, id).Scan(&hall.ID, &hall.Name, &capacity)
+	if err != nil {
+		return nil, err
+	}
+	hall.Capacity = uint32(capacity)
 
 	return &hall, nil
 }

@@ -137,10 +137,10 @@ func Setup(t *testing.T) *pgxpool.Pool {
 
 	ApplyMigrations(t, pool)
 
-	// Reset the table (and its id sequence) before every test for isolation.
+	// Reset the tables (and their id sequences) before every test for isolation.
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(), `TRUNCATE users RESTART IDENTITY CASCADE`); err != nil {
-			t.Errorf("truncate users table: %v", err)
+		if _, err := pool.Exec(context.Background(), `TRUNCATE users, halls, shows, seats, tickets RESTART IDENTITY CASCADE`); err != nil {
+			t.Errorf("truncate tables: %v", err)
 		}
 	})
 

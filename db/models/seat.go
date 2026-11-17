@@ -1,5 +1,11 @@
 package models
 
+import (
+	"context"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
 // Free (0) | Holding (1) | Booked (2)
 type BookingStatus int8
 
@@ -20,4 +26,52 @@ type Seat struct {
 	// Joined relations: filled manually after a JOIN query, never scanned directly.
 	User *User `db:"-" json:"user,omitempty" binding:"-"`
 	Hall *Hall `db:"-" json:"hall,omitempty" binding:"-"`
+}
+
+// CreateSeat inserts a seat. Pass userId = 0 for a free seat (no user yet);
+// any other value links the seat to that user (holding/booked).
+func CreateSeat(ctx context.Context, pool *pgxpool.Pool, userId, hallId int64, seatNumber uint32, status BookingStatus, price uint32) (*Seat, error) {
+	query := `INSERT INTO seats (user_id, hall_id, seat_number, status, price) VALUES ($1, $2, $3, $4, $5) RETURNING id, user_id, hall_id, seat_number, status, price`
+
+	// user_id is NULLABLE: 0 means "no user", which must be stored as NULL.
+	var userIdArg any
+	if userId != 0 {
+		userIdArg = userId
+	}
+
+	var seat Seat
+	var dbUserId *int64 // NULL until the seat is held/booked
+	var dbSeatNumber, dbPrice int64
+	err := pool.QueryRow(ctx, query, userIdArg, hallId, seatNumber, status, price).
+		Scan(&seat.ID, &dbUserId, &seat.HallId, &dbSeatNumber, &seat.Status, &dbPrice)
+	if err != nil {
+		return nil, err
+	}
+	if dbUserId != nil {
+		seat.UserId = *dbUserId
+	}
+	seat.SeatNumber = uint32(dbSeatNumber)
+	seat.Price = uint32(dbPrice)
+
+	return &seat, nil
+}
+
+func GetSeatById(ctx context.Context, pool *pgxpool.Pool, id int64) (*Seat, error) {
+	query := `SELECT id, user_id, hall_id, seat_number, status, price FROM seats WHERE id = $1`
+
+	var seat Seat
+	var dbUserId *int64 // NULL until the seat is held/booked
+	var dbSeatNumber, dbPrice int64
+	err := pool.QueryRow(ctx, query, id).
+		Scan(&seat.ID, &dbUserId, &seat.HallId, &dbSeatNumber, &seat.Status, &dbPrice)
+	if err != nil {
+		return nil, err
+	}
+	if dbUserId != nil {
+		seat.UserId = *dbUserId
+	}
+	seat.SeatNumber = uint32(dbSeatNumber)
+	seat.Price = uint32(dbPrice)
+
+	return &seat, nil
 }

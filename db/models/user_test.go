@@ -1,10 +1,12 @@
 package models_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/AhmedAl-Bahrawy/Cinema-Booking-System/db/models"
 	"github.com/AhmedAl-Bahrawy/Cinema-Booking-System/internal/testdb"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestCreateUser(t *testing.T) {
@@ -115,5 +117,62 @@ func TestCreateUser_PersistsRow(t *testing.T) {
 	if username != "persist_me" || fullName != "Persisted User" {
 		t.Errorf("stored user = (%q, %q), want (%q, %q)",
 			username, fullName, "persist_me", "Persisted User")
+	}
+}
+
+func TestGetUserById(t *testing.T) {
+	tests := []struct {
+		name string // description of this test case
+		// Named input parameters for target function.
+		id      int64
+		want    *models.User
+		wantErr bool
+	}{
+		{
+			name:    "returns the user for an existing id",
+			id:      1,
+			want:    &models.User{ID: 1, Username: "ahmed", FullName: "Ahmed Al-Bahrawy"},
+			wantErr: false,
+		},
+		{
+			// No user was seeded for this id, so no rows are returned.
+			name:    "returns error for a non-existent id",
+			id:      999,
+			wantErr: true,
+		},
+		{
+			// id is a BIGSERIAL starting at 1, so 0 can never exist.
+			name:    "returns error for id 0",
+			id:      0,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pool := testdb.Setup(t)
+
+			// Seed a known user so the test is independent of other data.
+			if _, err := models.CreateUser(t.Context(), pool, "ahmed", "Ahmed Al-Bahrawy"); err != nil {
+				t.Fatalf("seed user: %v", err)
+			}
+
+			got, gotErr := models.GetUserById(t.Context(), pool, tt.id)
+			if gotErr != nil {
+				if !tt.wantErr {
+					t.Errorf("GetUserById() failed: %v", gotErr)
+					return
+				}
+				if !errors.Is(gotErr, pgx.ErrNoRows) {
+					t.Errorf("GetUserById() error = %v, want pgx.ErrNoRows", gotErr)
+				}
+				return
+			}
+			if tt.wantErr {
+				t.Fatal("GetUserById() succeeded unexpectedly")
+			}
+			if got.ID != tt.want.ID || got.Username != tt.want.Username || got.FullName != tt.want.FullName {
+				t.Errorf("GetUserById() = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }

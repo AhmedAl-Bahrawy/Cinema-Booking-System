@@ -16,8 +16,19 @@ func CreateUser(ctx context.Context, pool *pgxpool.Pool, username string, fullNa
 	query := `INSERT INTO users (username, full_name) VALUES ($1, $2) RETURNING id, username, full_name`
 
 	var user User
-
 	err := pool.QueryRow(ctx, query, username, fullName).Scan(&user.ID, &user.Username, &user.FullName)
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+func GetUserById(ctx context.Context, pool *pgxpool.Pool, id int64) (*User, error) {
+	query := `SELECT id, username, full_name FROM users WHERE id = $1`
+
+	var user User
+	err := pool.QueryRow(ctx, query, id).Scan(&user.ID, &user.Username, &user.FullName)
 	if err != nil {
 		return nil, err
 	}

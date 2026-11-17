@@ -120,6 +120,88 @@ func TestCreateTicket_DuplicateSeatForShow(t *testing.T) {
 	}
 }
 
+func TestGetTicketWithDetails(t *testing.T) {
+	tests := []struct {
+		name    string // description of this test case
+		id      int64
+		wantErr bool
+	}{
+		{
+			name:    "returns the ticket with seat, hall and show filled",
+			id:      1,
+			wantErr: false,
+		},
+		{
+			// No ticket was seeded for this id, so no rows are returned.
+			name:    "returns error for a non-existent id",
+			id:      999,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pool := testdb.Setup(t)
+
+			// Seed known parents and a ticket so the test is independent of other data.
+			hall, seat, show := seedTicketParents(t, pool)
+			if _, err := models.CreateTicket(t.Context(), pool, seat.ID, hall.ID, show.ID); err != nil {
+				t.Fatalf("seed ticket: %v", err)
+			}
+
+			got, gotErr := models.GetTicketWithDetails(t.Context(), pool, tt.id)
+			if gotErr != nil {
+				if !tt.wantErr {
+					t.Errorf("GetTicketWithDetails() failed: %v", gotErr)
+					return
+				}
+				if !errors.Is(gotErr, pgx.ErrNoRows) {
+					t.Errorf("GetTicketWithDetails() error = %v, want pgx.ErrNoRows", gotErr)
+				}
+				return
+			}
+			if tt.wantErr {
+				t.Fatal("GetTicketWithDetails() succeeded unexpectedly")
+			}
+
+			// The ticket's own fields.
+			if got.ID != 1 || got.SeatId != seat.ID || got.HallId != hall.ID || got.ShowId != show.ID {
+				t.Errorf("GetTicketWithDetails() ticket fields = %+v", got)
+			}
+
+			// The joined Seat (a free seat: no user).
+			if got.Seat == nil {
+				t.Fatal("GetTicketWithDetails() returned a nil Seat")
+			}
+			if got.Seat.ID != seat.ID || got.Seat.SeatNumber != 1 || got.Seat.Status != models.Free {
+				t.Errorf("GetTicketWithDetails() Seat = %+v, want %+v", got.Seat, seat)
+			}
+			if got.Seat.User != nil {
+				t.Errorf("GetTicketWithDetails() Seat.User = %+v, want nil for a free seat", got.Seat.User)
+			}
+			if got.Seat.Hall == nil || got.Seat.Hall.ID != hall.ID {
+				t.Errorf("GetTicketWithDetails() Seat.Hall = %+v, want hall id %d", got.Seat.Hall, hall.ID)
+			}
+
+			// The joined Hall.
+			if got.Hall == nil {
+				t.Fatal("GetTicketWithDetails() returned a nil Hall")
+			}
+			if got.Hall.ID != hall.ID || got.Hall.Name != hall.Name || got.Hall.Capacity != hall.Capacity {
+				t.Errorf("GetTicketWithDetails() Hall = %+v, want %+v", got.Hall, hall)
+			}
+
+			// The joined Show.
+			if got.Show == nil {
+				t.Fatal("GetTicketWithDetails() returned a nil Show")
+			}
+			if got.Show.ID != show.ID || got.Show.Name != show.Name ||
+				got.Show.DurationMinutes != show.DurationMinutes || got.Show.AuthorName != show.AuthorName {
+				t.Errorf("GetTicketWithDetails() Show = %+v, want %+v", got.Show, show)
+			}
+		})
+	}
+}
+
 func TestGetTicketById(t *testing.T) {
 	tests := []struct {
 		name    string // description of this test case

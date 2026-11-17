@@ -56,6 +56,47 @@ func CreateSeat(ctx context.Context, pool *pgxpool.Pool, userId, hallId int64, s
 	return &seat, nil
 }
 
+// GetSeatWithDetails returns the seat with its Hall (and User, if any) filled
+// in from a JOIN query. A free seat has no user, so User stays nil for it.
+func GetSeatWithDetails(ctx context.Context, pool *pgxpool.Pool, id int64) (*Seat, error) {
+	query := `
+	SELECT
+	    s.id, s.user_id, s.hall_id, s.seat_number, s.status, s.price,
+	    h.id, h.name, h.capacity,
+	    u.id, u.username, u.full_name
+	FROM seats s
+	JOIN halls h ON h.id = s.hall_id
+	LEFT JOIN users u ON u.id = s.user_id
+	WHERE s.id = $1`
+
+	var seat Seat
+	hall := Hall{}
+
+	var dbUserId, dbJoinUserId *int64         // user_id + u.id, NULL for a free seat
+	var dbUsername, dbFullName *string        // NULL for a free seat
+	var dbSeatNumber, dbPrice, dbCapacity int64
+
+	err := pool.QueryRow(ctx, query, id).Scan(
+		&seat.ID, &dbUserId, &seat.HallId, &dbSeatNumber, &seat.Status, &dbPrice,
+		&hall.ID, &hall.Name, &dbCapacity,
+		&dbJoinUserId, &dbUsername, &dbFullName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if dbUserId != nil {
+		seat.UserId = *dbUserId
+		seat.User = &User{ID: *dbUserId, Username: *dbUsername, FullName: *dbFullName}
+	}
+	seat.SeatNumber = uint32(dbSeatNumber)
+	seat.Price = uint32(dbPrice)
+	hall.Capacity = uint32(dbCapacity)
+
+	seat.Hall = &hall
+
+	return &seat, nil
+}
+
 func GetSeatById(ctx context.Context, pool *pgxpool.Pool, id int64) (*Seat, error) {
 	query := `SELECT id, user_id, hall_id, seat_number, status, price FROM seats WHERE id = $1`
 

@@ -126,6 +126,95 @@ func TestCreateSeat_DuplicateSeatNumberInHall(t *testing.T) {
 	}
 }
 
+func TestGetSeatWithDetails(t *testing.T) {
+	tests := []struct {
+		name      string // description of this test case
+		withUser  bool   // true = book the seat for a user, false = free seat
+		id        int64
+		wantErr   bool
+	}{
+		{
+			name:     "returns a free seat with its hall but no user",
+			withUser: false,
+			id:       1,
+			wantErr:  false,
+		},
+		{
+			name:     "returns a booked seat with its hall and user",
+			withUser: true,
+			id:       1,
+			wantErr:  false,
+		},
+		{
+			// No seat was seeded for this id, so no rows are returned.
+			name:    "returns error for a non-existent id",
+			id:      999,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pool := testdb.Setup(t)
+			hall := seedHall(t, pool)
+
+			// Seed the seat (and a user if the seat is booked).
+			userId := int64(0)
+			if tt.withUser {
+				userId = seedUser(t, pool).ID
+			}
+			if _, err := models.CreateSeat(t.Context(), pool, userId, hall.ID, 1, models.Free, 100); err != nil {
+				t.Fatalf("seed seat: %v", err)
+			}
+
+			got, gotErr := models.GetSeatWithDetails(t.Context(), pool, tt.id)
+			if gotErr != nil {
+				if !tt.wantErr {
+					t.Errorf("GetSeatWithDetails() failed: %v", gotErr)
+					return
+				}
+				if !errors.Is(gotErr, pgx.ErrNoRows) {
+					t.Errorf("GetSeatWithDetails() error = %v, want pgx.ErrNoRows", gotErr)
+				}
+				return
+			}
+			if tt.wantErr {
+				t.Fatal("GetSeatWithDetails() succeeded unexpectedly")
+			}
+
+			// The seat's own fields.
+			if got.ID != 1 || got.SeatNumber != 1 || got.Status != models.Free || got.Price != 100 {
+				t.Errorf("GetSeatWithDetails() seat fields = %+v", got)
+			}
+
+			// The joined Hall.
+			if got.Hall == nil {
+				t.Fatal("GetSeatWithDetails() returned a nil Hall")
+			}
+			if got.Hall.ID != hall.ID || got.Hall.Name != hall.Name || got.Hall.Capacity != hall.Capacity {
+				t.Errorf("GetSeatWithDetails() Hall = %+v, want %+v", got.Hall, hall)
+			}
+
+			// The joined User: nil for a free seat, filled for a booked seat.
+			if !tt.withUser {
+				if got.User != nil {
+					t.Errorf("GetSeatWithDetails() User = %+v, want nil for a free seat", got.User)
+				}
+				if got.UserId != 0 {
+					t.Errorf("GetSeatWithDetails() UserId = %d, want 0 for a free seat", got.UserId)
+				}
+			} else {
+				if got.User == nil {
+					t.Fatal("GetSeatWithDetails() returned a nil User for a booked seat")
+				}
+				if got.UserId != userId || got.User.ID != userId ||
+					got.User.Username != "ahmed" || got.User.FullName != "Ahmed Al-Bahrawy" {
+					t.Errorf("GetSeatWithDetails() User = %+v, want user id %d", got.User, userId)
+				}
+			}
+		})
+	}
+}
+
 func TestGetSeatById(t *testing.T) {
 	tests := []struct {
 		name    string // description of this test case

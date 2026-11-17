@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -54,5 +53,4 @@ func main() {
 		})
 	})
 	r.Run() // listens on 0.0.0.0:8080 by default
-	fmt.Println("Hello, From Cinema Booking System!\n")
 }

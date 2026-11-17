@@ -12,6 +12,15 @@ type User struct {
 	FullName string `db:"full_name" json:"full_name" binding:"required,min=3,max=255"`
 }
 
-func CreateUser(ctx context.Context, pool *pgxpool.Pool, username string, fullName string) {
+func CreateUser(ctx context.Context, pool *pgxpool.Pool, username string, fullName string) (*User, error) {
+	query := `INSERT INTO users (username, full_name) VALUES ($1, $2) RETURNING id, username, full_name`
 
+	var user User
+
+	err := pool.QueryRow(ctx, query, username, fullName).Scan(&user.ID, &user.Username, &user.FullName)
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
 }

@@ -128,10 +128,10 @@ func TestCreateSeat_DuplicateSeatNumberInHall(t *testing.T) {
 
 func TestGetSeatWithDetails(t *testing.T) {
 	tests := []struct {
-		name      string // description of this test case
-		withUser  bool   // true = book the seat for a user, false = free seat
-		id        int64
-		wantErr   bool
+		name     string // description of this test case
+		withUser bool   // true = book the seat for a user, false = free seat
+		id       int64
+		wantErr  bool
 	}{
 		{
 			name:     "returns a free seat with its hall but no user",
@@ -270,5 +270,106 @@ func TestGetSeatById(t *testing.T) {
 				t.Errorf("GetSeatById() = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGetAllSeats(t *testing.T) {
+	t.Run("returns all seats ordered by id", func(t *testing.T) {
+		pool := testdb.Setup(t)
+		hall := seedHall(t, pool)
+		user := seedUser(t, pool)
+
+		freeSeat, err := models.CreateSeat(t.Context(), pool, 0, hall.ID, 1, models.Free, 100)
+		if err != nil {
+			t.Fatalf("seed free seat: %v", err)
+		}
+		bookedSeat, err := models.CreateSeat(t.Context(), pool, user.ID, hall.ID, 2, models.Booked, 150)
+		if err != nil {
+			t.Fatalf("seed booked seat: %v", err)
+		}
+
+		got, err := models.GetAllSeats(t.Context(), pool)
+		if err != nil {
+			t.Fatalf("GetAllSeats() failed: %v", err)
+		}
+
+		if len(got) != 2 {
+			t.Fatalf("GetAllSeats() returned %d seats, want 2", len(got))
+		}
+		if got[0].ID != freeSeat.ID || got[0].SeatNumber != 1 ||
+			got[0].Status != models.Free || got[0].Price != 100 || got[0].UserId != 0 {
+			t.Errorf("GetAllSeats()[0] = %+v", got[0])
+		}
+		if got[1].ID != bookedSeat.ID || got[1].SeatNumber != 2 ||
+			got[1].Status != models.Booked || got[1].Price != 150 || got[1].UserId != user.ID {
+			t.Errorf("GetAllSeats()[1] = %+v", got[1])
+		}
+		// A plain GetAll does not join, so the relations stay empty.
+		if got[0].User != nil || got[0].Hall != nil {
+			t.Errorf("GetAllSeats() should not fill relations, got %+v", got[0])
+		}
+	})
+
+	t.Run("returns an empty list when there are no seats", func(t *testing.T) {
+		pool := testdb.Setup(t)
+
+		got, err := models.GetAllSeats(t.Context(), pool)
+		if err != nil {
+			t.Fatalf("GetAllSeats() failed: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("GetAllSeats() returned %d seats, want 0", len(got))
+		}
+	})
+}
+
+func TestGetAllSeatsWithDetails(t *testing.T) {
+	pool := testdb.Setup(t)
+	hall := seedHall(t, pool)
+	user := seedUser(t, pool)
+
+	freeSeat, err := models.CreateSeat(t.Context(), pool, 0, hall.ID, 1, models.Free, 100)
+	if err != nil {
+		t.Fatalf("seed free seat: %v", err)
+	}
+	bookedSeat, err := models.CreateSeat(t.Context(), pool, user.ID, hall.ID, 2, models.Booked, 150)
+	if err != nil {
+		t.Fatalf("seed booked seat: %v", err)
+	}
+
+	got, err := models.GetAllSeatsWithDetails(t.Context(), pool)
+	if err != nil {
+		t.Fatalf("GetAllSeatsWithDetails() failed: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("GetAllSeatsWithDetails() returned %d seats, want 2", len(got))
+	}
+
+	// Free seat: Hall filled, User nil.
+	if got[0].ID != freeSeat.ID {
+		t.Fatalf("GetAllSeatsWithDetails()[0].ID = %d, want %d", got[0].ID, freeSeat.ID)
+	}
+	if got[0].Hall == nil || got[0].Hall.ID != hall.ID || got[0].Hall.Name != "Hall A" {
+		t.Errorf("GetAllSeatsWithDetails()[0].Hall = %+v, want hall %d", got[0].Hall, hall.ID)
+	}
+	if got[0].User != nil {
+		t.Errorf("GetAllSeatsWithDetails()[0].User = %+v, want nil for a free seat", got[0].User)
+	}
+
+	// Booked seat: Hall and User filled.
+	if got[1].ID != bookedSeat.ID {
+		t.Fatalf("GetAllSeatsWithDetails()[1].ID = %d, want %d", got[1].ID, bookedSeat.ID)
+	}
+	if got[1].Hall == nil || got[1].Hall.ID != hall.ID {
+		t.Errorf("GetAllSeatsWithDetails()[1].Hall = %+v, want hall %d", got[1].Hall, hall.ID)
+	}
+	if got[1].User == nil {
+		t.Fatal("GetAllSeatsWithDetails()[1].User is nil, want the booked user")
+	}
+	if got[1].User.ID != user.ID || got[1].User.Username != "ahmed" || got[1].User.FullName != "Ahmed Al-Bahrawy" {
+		t.Errorf("GetAllSeatsWithDetails()[1].User = %+v, want user %d", got[1].User, user.ID)
+	}
+	if got[1].UserId != user.ID || got[1].Status != models.Booked || got[1].Price != 150 {
+		t.Errorf("GetAllSeatsWithDetails()[1] = %+v", got[1])
 	}
 }

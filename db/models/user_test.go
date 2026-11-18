@@ -176,3 +176,101 @@ func TestGetUserById(t *testing.T) {
 		})
 	}
 }
+
+func TestGetAllUsers(t *testing.T) {
+	t.Run("returns all users ordered by id", func(t *testing.T) {
+		pool := testdb.Setup(t)
+
+		first, err := models.CreateUser(t.Context(), pool, "ahmed", "Ahmed Al-Bahrawy")
+		if err != nil {
+			t.Fatalf("seed first user: %v", err)
+		}
+		second, err := models.CreateUser(t.Context(), pool, "sara", "Sara Ali")
+		if err != nil {
+			t.Fatalf("seed second user: %v", err)
+		}
+
+		got, err := models.GetAllUsers(t.Context(), pool)
+		if err != nil {
+			t.Fatalf("GetAllUsers() failed: %v", err)
+		}
+
+		if len(got) != 2 {
+			t.Fatalf("GetAllUsers() returned %d users, want 2", len(got))
+		}
+		if got[0].ID != first.ID || got[0].Username != "ahmed" || got[0].FullName != "Ahmed Al-Bahrawy" {
+			t.Errorf("GetAllUsers()[0] = %+v, want %+v", got[0], first)
+		}
+		if got[1].ID != second.ID || got[1].Username != "sara" || got[1].FullName != "Sara Ali" {
+			t.Errorf("GetAllUsers()[1] = %+v, want %+v", got[1], second)
+		}
+	})
+
+	t.Run("returns an empty list when there are no users", func(t *testing.T) {
+		pool := testdb.Setup(t)
+
+		got, err := models.GetAllUsers(t.Context(), pool)
+		if err != nil {
+			t.Fatalf("GetAllUsers() failed: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("GetAllUsers() returned %d users, want 0", len(got))
+		}
+	})
+}
+
+func TestGetAllUsersWithDetails(t *testing.T) {
+	pool := testdb.Setup(t)
+
+	first, err := models.CreateUser(t.Context(), pool, "ahmed", "Ahmed Al-Bahrawy")
+	if err != nil {
+		t.Fatalf("seed first user: %v", err)
+	}
+	second, err := models.CreateUser(t.Context(), pool, "sara", "Sara Ali")
+	if err != nil {
+		t.Fatalf("seed second user: %v", err)
+	}
+	hall := seedHall(t, pool)
+
+	// The first user holds two seats; the second user has none.
+	seat1, err := models.CreateSeat(t.Context(), pool, first.ID, hall.ID, 1, models.Free, 100)
+	if err != nil {
+		t.Fatalf("seed first seat: %v", err)
+	}
+	seat2, err := models.CreateSeat(t.Context(), pool, first.ID, hall.ID, 2, models.Booked, 150)
+	if err != nil {
+		t.Fatalf("seed second seat: %v", err)
+	}
+
+	got, err := models.GetAllUsersWithDetails(t.Context(), pool)
+	if err != nil {
+		t.Fatalf("GetAllUsersWithDetails() failed: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("GetAllUsersWithDetails() returned %d users, want 2", len(got))
+	}
+
+	// First user: two seats attached.
+	if got[0].ID != first.ID {
+		t.Fatalf("GetAllUsersWithDetails()[0].ID = %d, want %d", got[0].ID, first.ID)
+	}
+	if len(got[0].Seats) != 2 {
+		t.Fatalf("GetAllUsersWithDetails()[0].Seats has %d seats, want 2", len(got[0].Seats))
+	}
+	if got[0].Seats[0].ID != seat1.ID || got[0].Seats[0].SeatNumber != 1 ||
+		got[0].Seats[0].HallId != hall.ID || got[0].Seats[0].UserId != first.ID ||
+		got[0].Seats[0].Status != models.Free || got[0].Seats[0].Price != 100 {
+		t.Errorf("GetAllUsersWithDetails()[0].Seats[0] = %+v", got[0].Seats[0])
+	}
+	if got[0].Seats[1].ID != seat2.ID || got[0].Seats[1].Status != models.Booked || got[0].Seats[1].Price != 150 {
+		t.Errorf("GetAllUsersWithDetails()[0].Seats[1] = %+v", got[0].Seats[1])
+	}
+
+	// Second user: no seats.
+	if got[1].ID != second.ID {
+		t.Fatalf("GetAllUsersWithDetails()[1].ID = %d, want %d", got[1].ID, second.ID)
+	}
+	if len(got[1].Seats) != 0 {
+		t.Errorf("GetAllUsersWithDetails()[1].Seats has %d seats, want 0", len(got[1].Seats))
+	}
+}

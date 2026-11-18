@@ -259,3 +259,107 @@ func TestGetTicketById(t *testing.T) {
 		})
 	}
 }
+
+func TestGetAllTickets(t *testing.T) {
+	t.Run("returns all tickets ordered by id", func(t *testing.T) {
+		pool := testdb.Setup(t)
+		hall := seedHall(t, pool)
+		show := seedShow(t, pool)
+
+		seat1, err := models.CreateSeat(t.Context(), pool, 0, hall.ID, 1, models.Free, 100)
+		if err != nil {
+			t.Fatalf("seed first seat: %v", err)
+		}
+		seat2, err := models.CreateSeat(t.Context(), pool, 0, hall.ID, 2, models.Free, 100)
+		if err != nil {
+			t.Fatalf("seed second seat: %v", err)
+		}
+
+		ticket1, err := models.CreateTicket(t.Context(), pool, seat1.ID, hall.ID, show.ID)
+		if err != nil {
+			t.Fatalf("seed first ticket: %v", err)
+		}
+		ticket2, err := models.CreateTicket(t.Context(), pool, seat2.ID, hall.ID, show.ID)
+		if err != nil {
+			t.Fatalf("seed second ticket: %v", err)
+		}
+
+		got, err := models.GetAllTickets(t.Context(), pool)
+		if err != nil {
+			t.Fatalf("GetAllTickets() failed: %v", err)
+		}
+
+		if len(got) != 2 {
+			t.Fatalf("GetAllTickets() returned %d tickets, want 2", len(got))
+		}
+		if got[0].ID != ticket1.ID || got[0].SeatId != seat1.ID ||
+			got[0].HallId != hall.ID || got[0].ShowId != show.ID {
+			t.Errorf("GetAllTickets()[0] = %+v", got[0])
+		}
+		if got[1].ID != ticket2.ID || got[1].SeatId != seat2.ID {
+			t.Errorf("GetAllTickets()[1] = %+v", got[1])
+		}
+	})
+
+	t.Run("returns an empty list when there are no tickets", func(t *testing.T) {
+		pool := testdb.Setup(t)
+
+		got, err := models.GetAllTickets(t.Context(), pool)
+		if err != nil {
+			t.Fatalf("GetAllTickets() failed: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("GetAllTickets() returned %d tickets, want 0", len(got))
+		}
+	})
+}
+
+func TestGetAllTicketsWithDetails(t *testing.T) {
+	pool := testdb.Setup(t)
+	hall, seat1, show := seedTicketParents(t, pool)
+
+	seat2, err := models.CreateSeat(t.Context(), pool, 0, hall.ID, 2, models.Free, 100)
+	if err != nil {
+		t.Fatalf("seed second seat: %v", err)
+	}
+	ticket1, err := models.CreateTicket(t.Context(), pool, seat1.ID, hall.ID, show.ID)
+	if err != nil {
+		t.Fatalf("seed first ticket: %v", err)
+	}
+	ticket2, err := models.CreateTicket(t.Context(), pool, seat2.ID, hall.ID, show.ID)
+	if err != nil {
+		t.Fatalf("seed second ticket: %v", err)
+	}
+
+	got, err := models.GetAllTicketsWithDetails(t.Context(), pool)
+	if err != nil {
+		t.Fatalf("GetAllTicketsWithDetails() failed: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("GetAllTicketsWithDetails() returned %d tickets, want 2", len(got))
+	}
+
+	for i, want := range []*models.Ticket{ticket1, ticket2} {
+		ticket := got[i]
+
+		if ticket.ID != want.ID || ticket.SeatId != want.SeatId ||
+			ticket.HallId != hall.ID || ticket.ShowId != show.ID {
+			t.Errorf("GetAllTicketsWithDetails()[%d] = %+v", i, ticket)
+		}
+		if ticket.Seat == nil {
+			t.Fatalf("GetAllTicketsWithDetails()[%d].Seat is nil", i)
+		}
+		if ticket.Seat.ID != want.SeatId {
+			t.Errorf("GetAllTicketsWithDetails()[%d].Seat.ID = %d, want %d", i, ticket.Seat.ID, want.SeatId)
+		}
+		if ticket.Seat.Hall == nil || ticket.Seat.Hall.ID != hall.ID {
+			t.Errorf("GetAllTicketsWithDetails()[%d].Seat.Hall = %+v, want hall %d", i, ticket.Seat.Hall, hall.ID)
+		}
+		if ticket.Hall == nil || ticket.Hall.ID != hall.ID || ticket.Hall.Name != hall.Name {
+			t.Errorf("GetAllTicketsWithDetails()[%d].Hall = %+v, want %+v", i, ticket.Hall, hall)
+		}
+		if ticket.Show == nil || ticket.Show.ID != show.ID || ticket.Show.Name != show.Name {
+			t.Errorf("GetAllTicketsWithDetails()[%d].Show = %+v, want %+v", i, ticket.Show, show)
+		}
+	}
+}

@@ -2,7 +2,9 @@ package models
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -30,6 +32,38 @@ func CreateTicket(ctx context.Context, pool *pgxpool.Pool, seatId, hallId, showI
 	return &ticket, nil
 }
 
+func GetTicketById(ctx context.Context, pool *pgxpool.Pool, id int64) (*Ticket, error) {
+	query := `SELECT id, seat_id, hall_id, show_id FROM tickets WHERE id = $1`
+
+	var ticket Ticket
+	err := pool.QueryRow(ctx, query, id).Scan(&ticket.ID, &ticket.SeatId, &ticket.HallId, &ticket.ShowId)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ticket, nil
+}
+
+func GetAllTickets(ctx context.Context, pool *pgxpool.Pool) ([]*Ticket, error) {
+	query := `SELECT id, seat_id, hall_id, show_id FROM tickets ORDER BY id`
+
+	rows, err := pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query tickets: %w", err)
+	}
+
+	tickets, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (*Ticket, error) {
+		var ticket Ticket
+		err := row.Scan(&ticket.ID, &ticket.SeatId, &ticket.HallId, &ticket.ShowId)
+		return &ticket, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("collect tickets: %w", err)
+	}
+
+	return tickets, nil
+}
+
 // GetTicketWithDetails returns the ticket with its Seat (including the Seat's
 // own Hall), Hall, and Show filled in from a JOIN query.
 func GetTicketWithDetails(ctx context.Context, pool *pgxpool.Pool, id int64) (*Ticket, error) {
@@ -45,6 +79,53 @@ func GetTicketWithDetails(ctx context.Context, pool *pgxpool.Pool, id int64) (*T
 	JOIN shows sh ON sh.id = t.show_id
 	WHERE t.id = $1`
 
+	rows, err := pool.Query(ctx, query, id)
+	if err != nil {
+		return nil, fmt.Errorf("query ticket with details: %w", err)
+	}
+
+	ticket, err := pgx.CollectOneRow(rows, func(row pgx.CollectableRow) (*Ticket, error) {
+		return scanTicketWithDetails(row)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return ticket, nil
+}
+
+// GetAllTicketsWithDetails returns every ticket with its Seat, Hall and Show
+// filled in from a JOIN query.
+func GetAllTicketsWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*Ticket, error) {
+	query := `
+	SELECT
+	    t.id, t.seat_id, t.hall_id, t.show_id,
+	    s.id, s.user_id, s.hall_id, s.seat_number, s.status, s.price,
+	    h.id, h.name, h.capacity,
+	    sh.id, sh.name, sh.duration_minutes, sh.author_name
+	FROM tickets t
+	JOIN seats s  ON s.id  = t.seat_id
+	JOIN halls h  ON h.id  = t.hall_id
+	JOIN shows sh ON sh.id = t.show_id
+	ORDER BY t.id`
+
+	rows, err := pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query tickets with details: %w", err)
+	}
+
+	tickets, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (*Ticket, error) {
+		return scanTicketWithDetails(row)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("collect tickets with details: %w", err)
+	}
+
+	return tickets, nil
+}
+
+// scanTicketWithDetails scans one ticket + seat + hall + show row.
+func scanTicketWithDetails(row pgx.CollectableRow) (*Ticket, error) {
 	var ticket Ticket
 	seat := Seat{}
 	hall := Hall{}
@@ -53,7 +134,7 @@ func GetTicketWithDetails(ctx context.Context, pool *pgxpool.Pool, id int64) (*T
 	var dbUserId *int64 // NULL until the seat is held/booked
 	var dbSeatNumber, dbPrice, dbCapacity int64
 
-	err := pool.QueryRow(ctx, query, id).Scan(
+	err := row.Scan(
 		&ticket.ID, &ticket.SeatId, &ticket.HallId, &ticket.ShowId,
 		&seat.ID, &dbUserId, &seat.HallId, &dbSeatNumber, &seat.Status, &dbPrice,
 		&hall.ID, &hall.Name, &dbCapacity,
@@ -74,18 +155,6 @@ func GetTicketWithDetails(ctx context.Context, pool *pgxpool.Pool, id int64) (*T
 	ticket.Seat = &seat
 	ticket.Hall = &hall
 	ticket.Show = &show
-
-	return &ticket, nil
-}
-
-func GetTicketById(ctx context.Context, pool *pgxpool.Pool, id int64) (*Ticket, error) {
-	query := `SELECT id, seat_id, hall_id, show_id FROM tickets WHERE id = $1`
-
-	var ticket Ticket
-	err := pool.QueryRow(ctx, query, id).Scan(&ticket.ID, &ticket.SeatId, &ticket.HallId, &ticket.ShowId)
-	if err != nil {
-		return nil, err
-	}
 
 	return &ticket, nil
 }

@@ -25,7 +25,6 @@ type Seat struct {
 	Status     BookingStatus `db:"status"      json:"status"      binding:"oneof=0 1 2"`
 	Price      uint32        `db:"price"       json:"price"       binding:"gte=0"` // 0 allowed (free seat)
 
-	// Joined relations: filled manually after a JOIN query, never scanned directly.
 	User *User `db:"-" json:"user,omitempty" binding:"-"`
 	Hall *Hall `db:"-" json:"hall,omitempty" binding:"-"`
 }

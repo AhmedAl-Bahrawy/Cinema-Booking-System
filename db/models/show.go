@@ -14,8 +14,17 @@ type Show struct {
 	DurationMinutes int64  `db:"duration_minutes" json:"duration_minutes" binding:"required,min=1"` // per-minutes
 	AuthorName      string `db:"author_name"      json:"author_name"      binding:"required,min=1,max=255"`
 
-	// Joined relations: filled manually after a JOIN query, never scanned directly.
 	Tickets []*Ticket `db:"-" json:"tickets,omitempty" binding:"-"`
+}
+
+type ShowTicket struct {
+	showID          int64
+	name            string
+	durationMinutes int64
+	authorName      string
+	ticketID        *int64 // NULL when the show has no tickets
+	seatID          *int64
+	hallID          *int64
 }
 
 func CreateShow(ctx context.Context, pool *pgxpool.Pool, name string, durationMinutes int64, authorName string) (*Show, error) {
@@ -62,17 +71,6 @@ func GetAllShows(ctx context.Context, pool *pgxpool.Pool) ([]*Show, error) {
 	return shows, nil
 }
 
-// showTicketRow is one raw row of the shows + tickets LEFT JOIN.
-type showTicketRow struct {
-	showID          int64
-	name            string
-	durationMinutes int64
-	authorName      string
-	ticketID        *int64 // NULL when the show has no tickets
-	seatID          *int64
-	hallID          *int64
-}
-
 // GetAllShowsWithDetails returns every show with its tickets filled in.
 // Shows without tickets still appear, with an empty Tickets list.
 func GetAllShowsWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*Show, error) {
@@ -89,8 +87,8 @@ func GetAllShowsWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*Show, e
 		return nil, fmt.Errorf("query shows with details: %w", err)
 	}
 
-	raw, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (showTicketRow, error) {
-		var r showTicketRow
+	raw, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (ShowTicket, error) {
+		var r ShowTicket
 		err := row.Scan(
 			&r.showID, &r.name, &r.durationMinutes, &r.authorName,
 			&r.ticketID, &r.seatID, &r.hallID,

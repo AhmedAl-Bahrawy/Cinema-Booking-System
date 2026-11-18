@@ -16,6 +16,17 @@ type Hall struct {
 	Seats []*Seat `db:"-" json:"seats,omitempty" binding:"-"`
 }
 
+type HallSeat struct {
+	hallID     int64
+	name       string
+	capacity   int64
+	seatID     *int64 // NULL when the hall has no seats
+	seatUserId *int64
+	seatNumber *int64
+	status     *int16
+	price      *int64
+}
+
 func CreateHall(ctx context.Context, pool *pgxpool.Pool, name string, capacity uint32) (*Hall, error) {
 	query := `INSERT INTO halls (name, capacity) VALUES ($1, $2) RETURNING id, name, capacity`
 
@@ -66,20 +77,6 @@ func GetAllHalls(ctx context.Context, pool *pgxpool.Pool) ([]*Hall, error) {
 	return halls, nil
 }
 
-// hallSeatRow is one raw row of the halls + seats LEFT JOIN.
-type hallSeatRow struct {
-	hallID     int64
-	name       string
-	capacity   int64
-	seatID     *int64 // NULL when the hall has no seats
-	seatUserId *int64
-	seatNumber *int64
-	status     *int16
-	price      *int64
-}
-
-// GetAllHallsWithDetails returns every hall with its seats filled in.
-// Halls without seats still appear, with an empty Seats list.
 func GetAllHallsWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*Hall, error) {
 	query := `
 	SELECT
@@ -94,8 +91,8 @@ func GetAllHallsWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*Hall, e
 		return nil, fmt.Errorf("query halls with details: %w", err)
 	}
 
-	raw, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (hallSeatRow, error) {
-		var r hallSeatRow
+	raw, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (HallSeat, error) {
+		var r HallSeat
 		err := row.Scan(
 			&r.hallID, &r.name, &r.capacity,
 			&r.seatID, &r.seatUserId, &r.seatNumber, &r.status, &r.price,

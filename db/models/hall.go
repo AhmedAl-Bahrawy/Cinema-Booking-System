@@ -27,12 +27,20 @@ type HallSeat struct {
 	price      *int64
 }
 
-func CreateHall(ctx context.Context, pool *pgxpool.Pool, name string, capacity uint32) (*Hall, error) {
+type HallRepository struct {
+	db *pgxpool.Pool
+}
+
+func NewHallRepository(db *pgxpool.Pool) *HallRepository {
+	return &HallRepository{db: db}
+}
+
+func (r *HallRepository) Create(ctx context.Context, name string, capacity uint32) (*Hall, error) {
 	query := `INSERT INTO halls (name, capacity) VALUES ($1, $2) RETURNING id, name, capacity`
 
 	var hall Hall
 	var dbCapacity int64 // scan INTEGER into int64, then convert
-	err := pool.QueryRow(ctx, query, name, capacity).Scan(&hall.ID, &hall.Name, &dbCapacity)
+	err := r.db.QueryRow(ctx, query, name, capacity).Scan(&hall.ID, &hall.Name, &dbCapacity)
 	if err != nil {
 		return nil, err
 	}

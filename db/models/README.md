@@ -9,7 +9,8 @@ If you come back to this code later, this file explains:
 - [Folder layout](#folder-layout)
 - [Database schema & relations](#database-schema--relations)
 - [Go structs and tags](#go-structs-and-tags)
-- [Function naming convention](#function-naming-convention)
+- [Request structs](#request-structs)
+- [Repository naming convention](#repository-naming-convention)
 - [The 3 query patterns used here](#the-3-query-patterns-used-here)
 - [Important details (NULLs, uint32, JSON cycles)](#important-details)
 - [Usage examples](#usage-examples)
@@ -31,6 +32,10 @@ If you come back to this code later, this file explains:
 
 Migrations live in [`../migrations`](../migrations) and are the source of truth for
 the schema. Go structs only mirror them.
+
+`user.go` also defines `UserReq`, a small **request payload** struct used by the
+HTTP layer for `POST /user`. It is not a table model and is never scanned from the
+database. See [Request structs](#request-structs) below.
 
 ---
 
@@ -131,6 +136,26 @@ Show *Show `db:"-" json:"show,omitempty" binding:"-"`
 `db:"-"` means "don't map this to a column". `binding:"-"` means Gin ignores the
 field when validating request bodies.
 
+### Request structs
+
+Models are shaped for **database rows and responses**. For incoming JSON bodies
+we use a separate request struct so clients cannot set fields they do not own
+(`id`, relations, `status`, ...).
+
+```go
+type UserReq struct {
+    Username string `db:"username"  json:"username"  binding:"required,min=3,max=100"`
+    FullName string `db:"full_name" json:"full_name" binding:"required,min=3,max=255"`
+}
+```
+
+- Used by `handlers.CreateUser` with `c.ShouldBindJSON(&newUser)`.
+- `binding` tags are the first line of validation; the handler also re-checks the
+  lengths in `validateUser`.
+- The `db` tags are informational only — this struct is never passed to `pgx`.
+- Add a `*Req` struct next to the model when a handler needs a different payload
+  from the full model (e.g. a future `SeatBookReq`).
+
 ### Helper row structs
 
 `UserSeat`, `HallSeat` and `ShowTicket` are **not models** — they exist only to hold
@@ -155,19 +180,23 @@ func NewUserRepository(db *pgxpool.Pool) *UserRepository {
 }
 ```
 
-Each repository exposes the same predictable set of methods:
+Repositories share a predictable set of methods:
 
-| Method | Returns | SQL |
-|--------|---------|-----|
-| `Create(...)` | `*X` | `INSERT ... RETURNING ...` |
-| `GetById(...)` | `*X` | `SELECT ... WHERE id = $1` |
-| `GetAll(...)` | `[]*X` | `SELECT ... ORDER BY id` |
-| `GetWithDetails(...)` | `*X` with relations | `SELECT ... JOIN ... WHERE id = $1` |
-| `GetAllWithDetails(...)` | `[]*X` with relations | `SELECT ... JOIN ... ORDER BY id` |
+| Method | Returns | SQL | Present on |
+|--------|---------|-----|------------|
+| `Create(...)` | `*X` | `INSERT ... RETURNING ...` | all models |
+| `GetById(...)` | `*X` | `SELECT ... WHERE id = $1` | all models |
+| `GetAll(...)` | `[]*X` | `SELECT ... ORDER BY id` | all models |
+| `GetWithDetails(...)` | `*X` with relations | `SELECT ... JOIN ... WHERE id = $1` | `Seat`, `Ticket` |
+| `GetAllWithDetails(...)` | `[]*X` with relations | `SELECT ... JOIN ... ORDER BY id` | all models |
+
+`User`, `Hall` and `Show` only have the list variant (`GetAllWithDetails`)
+because they are the "parent" side of a one-to-many relation; `Seat` and `Ticket`
+also have a single-row variant.
 
 "Details" means the relation fields are filled:
 
-| Model | Relations filled by `...WithDetails` |
+| Model | Relations filled by `GetAllWithDetails` (and `GetWithDetails` where present) |
 |-------|--------------------------------------|
 | `User` | `Seats` |
 | `Hall` | `Seats` |

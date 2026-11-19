@@ -31,14 +31,14 @@
 | Database migrations | ✅ Done | `users`, `halls`, `shows`, `seats`, `tickets` |
 | Models + repositories | ✅ Done | Explicit SQL with `pgx` v5 (no ORM) |
 | Repository tests | ✅ Done | Integration tests against a real PostgreSQL DB |
-| Handlers | 🚧 Skeleton | `Handler` struct is wired, `user.go` is empty |
-| Router | 🚧 Skeleton | `SetupRouter` returns a bare `gin` engine |
+| Handlers | 🚧 In progress | `CreateUser` is implemented; hall/show/seat/ticket handlers are pending |
+| Router | 🚧 In progress | `POST /user` is registered; the other routes are pending |
 | Booking logic (hold/book) | ⬜ Not started | The main goal of the project |
 | UI | ⬜ Not started | Only if there is time |
 
 The project currently **starts**, connects to PostgreSQL, builds all repositories,
-and serves nothing yet (no routes registered). The next step is writing the HTTP
-handlers and the booking/seat-hold logic.
+wires them into the handlers and router, and exposes one endpoint: `POST /user`.
+The next step is the remaining handlers and the booking/seat-hold logic.
 
 ---
 
@@ -72,9 +72,10 @@ Cinema-Booking-System/
 │       └── README.md           # Deep dive into the models/repository layer
 ├── handlers/                   # Gin handlers (HTTP layer)
 │   ├── handlers.go             # Handler struct holding all repositories
-│   └── user.go                 # (empty, next to implement)
+│   ├── user.go                 # CreateUser handler + request validation
+│   └── README.md               # Endpoint reference and handler conventions
 ├── router/
-│   └── router.go               # Registers routes on the Gin engine
+│   └── router.go               # Registers routes on the Gin engine (`POST /user`)
 ├── internal/
 │   └── testdb/testdb.go        # Creates a throwaway DB, applies migrations, cleans up
 ├── go.mod / go.sum
@@ -88,6 +89,8 @@ Cinema-Booking-System/
 **Where to read more:** [`db/models/README.md`](db/models/README.md) documents the
 schema, the struct/tag conventions, the repository naming pattern, the three query
 patterns used in the code, and the testing setup in detail.
+[`handlers/README.md`](handlers/README.md) documents the HTTP layer, the current
+endpoint, and the handler conventions.
 
 ---
 
@@ -134,10 +137,30 @@ goose down-to 0
 go run .
 ```
 
-The server listens on **`http://localhost:8080`**. At the moment no routes are
-registered, so all requests return `404` until the router is filled in.
+The server listens on **`http://localhost:8080`**. Only `POST /user` is registered
+so far, so every other path returns `404` until the router is filled in.
 
-### 4. Run the tests
+### 4. Try the current endpoint
+
+```bash
+curl -i -X POST http://localhost:8080/user \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"ahmed","full_name":"Ahmed Al-Bahrawy"}'
+```
+
+A successful request returns `201 Created`:
+
+```json
+{ "message": "user created successfully" }
+```
+
+Invalid JSON, a username/full name outside the allowed length, or a duplicate
+username currently returns `400 Bad Request` — but note that the handler also
+calls `log.Fatal` on validation/repository errors, which stops the server. See
+[`handlers/README.md`](handlers/README.md) for the full endpoint reference and
+known issues.
+
+### 5. Run the tests
 
 Tests use `TEST_DATABASE_URL`, falling back to `GOOSE_DBSTRING` from `.env`.
 If neither is set, model tests are **skipped** (so `go test ./...` still passes
@@ -241,7 +264,10 @@ These are the design targets for the core feature — nothing is implemented yet
 - [x] Implement models and repositories
 - [x] Cover repositories with integration tests
 - [x] Wire repositories into handlers and router
-- [ ] Implement user/hall/show/seat/ticket handlers and routes
+- [x] Implement `POST /user` (`CreateUser`)
+- [ ] Implement the remaining user routes (`GET /users`, `GET /user/:id`, ...)
+- [ ] Implement hall/show/seat/ticket handlers and routes
+- [ ] Harden handler error handling (no `log.Fatal`; return `400`/`404`/`409`/`500`)
 - [ ] Implement the hold → book lifecycle with transactions
 - [ ] Prevent double booking (atomic updates + unique constraints)
 - [ ] Handle concurrent users on the same seat (`409` + live status)
@@ -254,4 +280,5 @@ These are the design targets for the core feature — nothing is implemented yet
 ## Rules Reminder
 
 - **No AI writes code** — AI may explain and review, but the code is written by hand.
-- **Markdown files are the exception** (this README and `db/models/README.md`).
+- **Markdown files are the exception** (this README, `db/models/README.md` and
+  `handlers/README.md`).

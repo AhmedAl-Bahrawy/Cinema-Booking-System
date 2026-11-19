@@ -8,5 +8,7 @@ import (
 func SetupRouter(h *handlers.Handler) *gin.Engine {
 	r := gin.Default()
 
+	r.POST("/user", h.CreateUser)
+
 	return r
 }

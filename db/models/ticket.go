@@ -20,11 +20,19 @@ type Ticket struct {
 	Show *Show `db:"-" json:"show,omitempty" binding:"-"`
 }
 
-func CreateTicket(ctx context.Context, pool *pgxpool.Pool, seatId, hallId, showId int64) (*Ticket, error) {
+type TicketRepository struct {
+	db *pgxpool.Pool
+}
+
+func NewTicketRepository(db *pgxpool.Pool) *TicketRepository {
+	return &TicketRepository{db: db}
+}
+
+func (r *TicketRepository) Create(ctx context.Context, seatId, hallId, showId int64) (*Ticket, error) {
 	query := `INSERT INTO tickets (seat_id, hall_id, show_id) VALUES ($1, $2, $3) RETURNING id, seat_id, hall_id, show_id`
 
 	var ticket Ticket
-	err := pool.QueryRow(ctx, query, seatId, hallId, showId).Scan(&ticket.ID, &ticket.SeatId, &ticket.HallId, &ticket.ShowId)
+	err := r.db.QueryRow(ctx, query, seatId, hallId, showId).Scan(&ticket.ID, &ticket.SeatId, &ticket.HallId, &ticket.ShowId)
 	if err != nil {
 		return nil, err
 	}
@@ -32,11 +40,11 @@ func CreateTicket(ctx context.Context, pool *pgxpool.Pool, seatId, hallId, showI
 	return &ticket, nil
 }
 
-func GetTicketById(ctx context.Context, pool *pgxpool.Pool, id int64) (*Ticket, error) {
+func (r *TicketRepository) GetById(ctx context.Context, id int64) (*Ticket, error) {
 	query := `SELECT id, seat_id, hall_id, show_id FROM tickets WHERE id = $1`
 
 	var ticket Ticket
-	err := pool.QueryRow(ctx, query, id).Scan(&ticket.ID, &ticket.SeatId, &ticket.HallId, &ticket.ShowId)
+	err := r.db.QueryRow(ctx, query, id).Scan(&ticket.ID, &ticket.SeatId, &ticket.HallId, &ticket.ShowId)
 	if err != nil {
 		return nil, err
 	}
@@ -44,10 +52,10 @@ func GetTicketById(ctx context.Context, pool *pgxpool.Pool, id int64) (*Ticket, 
 	return &ticket, nil
 }
 
-func GetAllTickets(ctx context.Context, pool *pgxpool.Pool) ([]*Ticket, error) {
+func (r *TicketRepository) GetAll(ctx context.Context) ([]*Ticket, error) {
 	query := `SELECT id, seat_id, hall_id, show_id FROM tickets ORDER BY id`
 
-	rows, err := pool.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query tickets: %w", err)
 	}
@@ -64,9 +72,9 @@ func GetAllTickets(ctx context.Context, pool *pgxpool.Pool) ([]*Ticket, error) {
 	return tickets, nil
 }
 
-// GetTicketWithDetails returns the ticket with its Seat (including the Seat's
+// GetWithDetails returns the ticket with its Seat (including the Seat's
 // own Hall), Hall, and Show filled in from a JOIN query.
-func GetTicketWithDetails(ctx context.Context, pool *pgxpool.Pool, id int64) (*Ticket, error) {
+func (r *TicketRepository) GetWithDetails(ctx context.Context, id int64) (*Ticket, error) {
 	query := `
 	SELECT
 	    t.id, t.seat_id, t.hall_id, t.show_id,
@@ -79,7 +87,7 @@ func GetTicketWithDetails(ctx context.Context, pool *pgxpool.Pool, id int64) (*T
 	JOIN shows sh ON sh.id = t.show_id
 	WHERE t.id = $1`
 
-	rows, err := pool.Query(ctx, query, id)
+	rows, err := r.db.Query(ctx, query, id)
 	if err != nil {
 		return nil, fmt.Errorf("query ticket with details: %w", err)
 	}
@@ -94,9 +102,9 @@ func GetTicketWithDetails(ctx context.Context, pool *pgxpool.Pool, id int64) (*T
 	return ticket, nil
 }
 
-// GetAllTicketsWithDetails returns every ticket with its Seat, Hall and Show
+// GetAllWithDetails returns every ticket with its Seat, Hall and Show
 // filled in from a JOIN query.
-func GetAllTicketsWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*Ticket, error) {
+func (r *TicketRepository) GetAllWithDetails(ctx context.Context) ([]*Ticket, error) {
 	query := `
 	SELECT
 	    t.id, t.seat_id, t.hall_id, t.show_id,
@@ -109,7 +117,7 @@ func GetAllTicketsWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*Ticke
 	JOIN shows sh ON sh.id = t.show_id
 	ORDER BY t.id`
 
-	rows, err := pool.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query tickets with details: %w", err)
 	}

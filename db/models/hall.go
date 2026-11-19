@@ -49,12 +49,12 @@ func (r *HallRepository) Create(ctx context.Context, name string, capacity uint3
 	return &hall, nil
 }
 
-func GetHallById(ctx context.Context, pool *pgxpool.Pool, id int64) (*Hall, error) {
+func (r *HallRepository) GetById(ctx context.Context, id int64) (*Hall, error) {
 	query := `SELECT id, name, capacity FROM halls WHERE id = $1`
 
 	var hall Hall
 	var capacity int64 // scan INTEGER into int64, then convert
-	err := pool.QueryRow(ctx, query, id).Scan(&hall.ID, &hall.Name, &capacity)
+	err := r.db.QueryRow(ctx, query, id).Scan(&hall.ID, &hall.Name, &capacity)
 	if err != nil {
 		return nil, err
 	}
@@ -63,10 +63,10 @@ func GetHallById(ctx context.Context, pool *pgxpool.Pool, id int64) (*Hall, erro
 	return &hall, nil
 }
 
-func GetAllHalls(ctx context.Context, pool *pgxpool.Pool) ([]*Hall, error) {
+func (r *HallRepository) GetAll(ctx context.Context) ([]*Hall, error) {
 	query := `SELECT id, name, capacity FROM halls ORDER BY id`
 
-	rows, err := pool.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query halls: %w", err)
 	}
@@ -85,7 +85,7 @@ func GetAllHalls(ctx context.Context, pool *pgxpool.Pool) ([]*Hall, error) {
 	return halls, nil
 }
 
-func GetAllHallsWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*Hall, error) {
+func (r *HallRepository) GetAllWithDetails(ctx context.Context) ([]*Hall, error) {
 	query := `
 	SELECT
 	    h.id, h.name, h.capacity,
@@ -94,7 +94,7 @@ func GetAllHallsWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*Hall, e
 	LEFT JOIN seats s ON s.hall_id = h.id
 	ORDER BY h.id, s.id`
 
-	rows, err := pool.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query halls with details: %w", err)
 	}

@@ -36,19 +36,20 @@ func TestCreateHall(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pool := testdb.Setup(t)
+			repo := models.NewHallRepository(pool)
 
-			got, gotErr := models.CreateHall(t.Context(), pool, tt.hallName, tt.capacity)
+			got, gotErr := repo.Create(t.Context(), tt.hallName, tt.capacity)
 			if gotErr != nil {
 				if !tt.wantErr {
-					t.Errorf("CreateHall() failed: %v", gotErr)
+					t.Errorf("Create() failed: %v", gotErr)
 				}
 				return
 			}
 			if tt.wantErr {
-				t.Fatal("CreateHall() succeeded unexpectedly")
+				t.Fatal("Create() succeeded unexpectedly")
 			}
 			if got.ID != tt.want.ID || got.Name != tt.want.Name || got.Capacity != tt.want.Capacity {
-				t.Errorf("CreateHall() = %+v, want %+v", got, tt.want)
+				t.Errorf("Create() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
@@ -58,18 +59,19 @@ func TestCreateHall(t *testing.T) {
 // the second insert with the same name must fail.
 func TestCreateHall_DuplicateName(t *testing.T) {
 	pool := testdb.Setup(t)
+	repo := models.NewHallRepository(pool)
 
-	first, err := models.CreateHall(t.Context(), pool, "Main Hall", 50)
+	first, err := repo.Create(t.Context(), "Main Hall", 50)
 	if err != nil {
-		t.Fatalf("CreateHall() first insert failed: %v", err)
+		t.Fatalf("Create() first insert failed: %v", err)
 	}
 
-	second, err := models.CreateHall(t.Context(), pool, "Main Hall", 200)
+	second, err := repo.Create(t.Context(), "Main Hall", 200)
 	if err == nil {
-		t.Errorf("CreateHall() succeeded unexpectedly for duplicate name: %+v", second)
+		t.Errorf("Create() succeeded unexpectedly for duplicate name: %+v", second)
 	}
 	if second != nil {
-		t.Errorf("CreateHall() returned a hall on error: %+v", second)
+		t.Errorf("Create() returned a hall on error: %+v", second)
 	}
 
 	// The first hall must be untouched by the failed insert.
@@ -112,28 +114,29 @@ func TestGetHallById(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pool := testdb.Setup(t)
+			repo := models.NewHallRepository(pool)
 
 			// Seed a known hall so the test is independent of other data.
-			if _, err := models.CreateHall(t.Context(), pool, "Hall A", 100); err != nil {
+			if _, err := repo.Create(t.Context(), "Hall A", 100); err != nil {
 				t.Fatalf("seed hall: %v", err)
 			}
 
-			got, gotErr := models.GetHallById(t.Context(), pool, tt.id)
+			got, gotErr := repo.GetById(t.Context(), tt.id)
 			if gotErr != nil {
 				if !tt.wantErr {
-					t.Errorf("GetHallById() failed: %v", gotErr)
+					t.Errorf("GetById() failed: %v", gotErr)
 					return
 				}
 				if !errors.Is(gotErr, pgx.ErrNoRows) {
-					t.Errorf("GetHallById() error = %v, want pgx.ErrNoRows", gotErr)
+					t.Errorf("GetById() error = %v, want pgx.ErrNoRows", gotErr)
 				}
 				return
 			}
 			if tt.wantErr {
-				t.Fatal("GetHallById() succeeded unexpectedly")
+				t.Fatal("GetById() succeeded unexpectedly")
 			}
 			if got.ID != tt.want.ID || got.Name != tt.want.Name || got.Capacity != tt.want.Capacity {
-				t.Errorf("GetHallById() = %+v, want %+v", got, tt.want)
+				t.Errorf("GetById() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
@@ -142,96 +145,100 @@ func TestGetHallById(t *testing.T) {
 func TestGetAllHalls(t *testing.T) {
 	t.Run("returns all halls ordered by id", func(t *testing.T) {
 		pool := testdb.Setup(t)
+		repo := models.NewHallRepository(pool)
 
-		first, err := models.CreateHall(t.Context(), pool, "Hall A", 100)
+		first, err := repo.Create(t.Context(), "Hall A", 100)
 		if err != nil {
 			t.Fatalf("seed first hall: %v", err)
 		}
-		second, err := models.CreateHall(t.Context(), pool, "Hall B", 50)
+		second, err := repo.Create(t.Context(), "Hall B", 50)
 		if err != nil {
 			t.Fatalf("seed second hall: %v", err)
 		}
 
-		got, err := models.GetAllHalls(t.Context(), pool)
+		got, err := repo.GetAll(t.Context())
 		if err != nil {
-			t.Fatalf("GetAllHalls() failed: %v", err)
+			t.Fatalf("GetAll() failed: %v", err)
 		}
 
 		if len(got) != 2 {
-			t.Fatalf("GetAllHalls() returned %d halls, want 2", len(got))
+			t.Fatalf("GetAll() returned %d halls, want 2", len(got))
 		}
 		if got[0].ID != first.ID || got[0].Name != "Hall A" || got[0].Capacity != 100 {
-			t.Errorf("GetAllHalls()[0] = %+v, want %+v", got[0], first)
+			t.Errorf("GetAll()[0] = %+v, want %+v", got[0], first)
 		}
 		if got[1].ID != second.ID || got[1].Name != "Hall B" || got[1].Capacity != 50 {
-			t.Errorf("GetAllHalls()[1] = %+v, want %+v", got[1], second)
+			t.Errorf("GetAll()[1] = %+v, want %+v", got[1], second)
 		}
 	})
 
 	t.Run("returns an empty list when there are no halls", func(t *testing.T) {
 		pool := testdb.Setup(t)
+		repo := models.NewHallRepository(pool)
 
-		got, err := models.GetAllHalls(t.Context(), pool)
+		got, err := repo.GetAll(t.Context())
 		if err != nil {
-			t.Fatalf("GetAllHalls() failed: %v", err)
+			t.Fatalf("GetAll() failed: %v", err)
 		}
 		if len(got) != 0 {
-			t.Errorf("GetAllHalls() returned %d halls, want 0", len(got))
+			t.Errorf("GetAll() returned %d halls, want 0", len(got))
 		}
 	})
 }
 
 func TestGetAllHallsWithDetails(t *testing.T) {
 	pool := testdb.Setup(t)
+	hallRepo := models.NewHallRepository(pool)
+	seatRepo := models.NewSeatRepository(pool)
 
-	hallA, err := models.CreateHall(t.Context(), pool, "Hall A", 100)
+	hallA, err := hallRepo.Create(t.Context(), "Hall A", 100)
 	if err != nil {
 		t.Fatalf("seed first hall: %v", err)
 	}
-	hallB, err := models.CreateHall(t.Context(), pool, "Hall B", 50)
+	hallB, err := hallRepo.Create(t.Context(), "Hall B", 50)
 	if err != nil {
 		t.Fatalf("seed second hall: %v", err)
 	}
 
 	// Hall A has two seats; Hall B has none.
-	seat1, err := models.CreateSeat(t.Context(), pool, 0, hallA.ID, 1, models.Free, 100)
+	seat1, err := seatRepo.Create(t.Context(), 0, hallA.ID, 1, models.Free, 100)
 	if err != nil {
 		t.Fatalf("seed first seat: %v", err)
 	}
-	seat2, err := models.CreateSeat(t.Context(), pool, 0, hallA.ID, 2, models.Holding, 150)
+	seat2, err := seatRepo.Create(t.Context(), 0, hallA.ID, 2, models.Holding, 150)
 	if err != nil {
 		t.Fatalf("seed second seat: %v", err)
 	}
 
-	got, err := models.GetAllHallsWithDetails(t.Context(), pool)
+	got, err := hallRepo.GetAllWithDetails(t.Context())
 	if err != nil {
-		t.Fatalf("GetAllHallsWithDetails() failed: %v", err)
+		t.Fatalf("GetAllWithDetails() failed: %v", err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("GetAllHallsWithDetails() returned %d halls, want 2", len(got))
+		t.Fatalf("GetAllWithDetails() returned %d halls, want 2", len(got))
 	}
 
 	// Hall A: two seats attached.
 	if got[0].ID != hallA.ID {
-		t.Fatalf("GetAllHallsWithDetails()[0].ID = %d, want %d", got[0].ID, hallA.ID)
+		t.Fatalf("GetAllWithDetails()[0].ID = %d, want %d", got[0].ID, hallA.ID)
 	}
 	if len(got[0].Seats) != 2 {
-		t.Fatalf("GetAllHallsWithDetails()[0].Seats has %d seats, want 2", len(got[0].Seats))
+		t.Fatalf("GetAllWithDetails()[0].Seats has %d seats, want 2", len(got[0].Seats))
 	}
 	if got[0].Seats[0].ID != seat1.ID || got[0].Seats[0].SeatNumber != 1 ||
 		got[0].Seats[0].HallId != hallA.ID || got[0].Seats[0].Status != models.Free ||
 		got[0].Seats[0].Price != 100 {
-		t.Errorf("GetAllHallsWithDetails()[0].Seats[0] = %+v", got[0].Seats[0])
+		t.Errorf("GetAllWithDetails()[0].Seats[0] = %+v", got[0].Seats[0])
 	}
 	if got[0].Seats[1].ID != seat2.ID || got[0].Seats[1].Status != models.Holding || got[0].Seats[1].Price != 150 {
-		t.Errorf("GetAllHallsWithDetails()[0].Seats[1] = %+v", got[0].Seats[1])
+		t.Errorf("GetAllWithDetails()[0].Seats[1] = %+v", got[0].Seats[1])
 	}
 
 	// Hall B: no seats.
 	if got[1].ID != hallB.ID {
-		t.Fatalf("GetAllHallsWithDetails()[1].ID = %d, want %d", got[1].ID, hallB.ID)
+		t.Fatalf("GetAllWithDetails()[1].ID = %d, want %d", got[1].ID, hallB.ID)
 	}
 	if len(got[1].Seats) != 0 {
-		t.Errorf("GetAllHallsWithDetails()[1].Seats has %d seats, want 0", len(got[1].Seats))
+		t.Errorf("GetAllWithDetails()[1].Seats has %d seats, want 0", len(got[1].Seats))
 	}
 }

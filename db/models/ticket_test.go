@@ -13,7 +13,7 @@ import (
 // seedShow creates one show to use for tickets.
 func seedShow(t *testing.T, pool *pgxpool.Pool) *models.Show {
 	t.Helper()
-	show, err := models.CreateShow(t.Context(), pool, "Hamlet", 120, "Shakespeare")
+	show, err := models.NewShowRepository(pool).Create(t.Context(), "Hamlet", 120, "Shakespeare")
 	if err != nil {
 		t.Fatalf("seed show: %v", err)
 	}
@@ -25,7 +25,7 @@ func seedShow(t *testing.T, pool *pgxpool.Pool) *models.Show {
 func seedTicketParents(t *testing.T, pool *pgxpool.Pool) (*models.Hall, *models.Seat, *models.Show) {
 	t.Helper()
 	hall := seedHall(t, pool)
-	seat, err := models.CreateSeat(t.Context(), pool, 0, hall.ID, 1, models.Free, 100)
+	seat, err := models.NewSeatRepository(pool).Create(t.Context(), 0, hall.ID, 1, models.Free, 100)
 	if err != nil {
 		t.Fatalf("seed seat: %v", err)
 	}
@@ -70,20 +70,21 @@ func TestCreateTicket(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pool := testdb.Setup(t)
+			repo := models.NewTicketRepository(pool)
 			_, _, _ = seedTicketParents(t, pool)
 
-			got, gotErr := models.CreateTicket(t.Context(), pool, tt.seatId, tt.hallId, tt.showId)
+			got, gotErr := repo.Create(t.Context(), tt.seatId, tt.hallId, tt.showId)
 			if gotErr != nil {
 				if !tt.wantErr {
-					t.Errorf("CreateTicket() failed: %v", gotErr)
+					t.Errorf("Create() failed: %v", gotErr)
 				}
 				return
 			}
 			if tt.wantErr {
-				t.Fatal("CreateTicket() succeeded unexpectedly")
+				t.Fatal("Create() succeeded unexpectedly")
 			}
 			if *got != *tt.want {
-				t.Errorf("CreateTicket() = %+v, want %+v", got, tt.want)
+				t.Errorf("Create() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
@@ -94,29 +95,31 @@ func TestCreateTicket(t *testing.T) {
 // for a different show.
 func TestCreateTicket_DuplicateSeatForShow(t *testing.T) {
 	pool := testdb.Setup(t)
+	ticketRepo := models.NewTicketRepository(pool)
+	showRepo := models.NewShowRepository(pool)
 	_, seat, show := seedTicketParents(t, pool)
 
-	first, err := models.CreateTicket(t.Context(), pool, seat.ID, seat.HallId, show.ID)
+	first, err := ticketRepo.Create(t.Context(), seat.ID, seat.HallId, show.ID)
 	if err != nil {
-		t.Fatalf("CreateTicket() first insert failed: %v", err)
+		t.Fatalf("Create() first insert failed: %v", err)
 	}
 
-	second, err := models.CreateTicket(t.Context(), pool, seat.ID, seat.HallId, show.ID)
+	second, err := ticketRepo.Create(t.Context(), seat.ID, seat.HallId, show.ID)
 	if err == nil {
-		t.Errorf("CreateTicket() succeeded unexpectedly for duplicate seat per show: %+v", second)
+		t.Errorf("Create() succeeded unexpectedly for duplicate seat per show: %+v", second)
 	}
 
 	// The same seat for another show must still work.
-	otherShow, err := models.CreateShow(t.Context(), pool, "Othello", 90, "Shakespeare")
+	otherShow, err := showRepo.Create(t.Context(), "Othello", 90, "Shakespeare")
 	if err != nil {
 		t.Fatalf("seed second show: %v", err)
 	}
-	other, err := models.CreateTicket(t.Context(), pool, seat.ID, seat.HallId, otherShow.ID)
+	other, err := ticketRepo.Create(t.Context(), seat.ID, seat.HallId, otherShow.ID)
 	if err != nil {
-		t.Errorf("CreateTicket() failed for same seat on another show: %v", err)
+		t.Errorf("Create() failed for same seat on another show: %v", err)
 	}
 	if other != nil && other.ID == first.ID {
-		t.Errorf("CreateTicket() returned the first ticket's id: %d", other.ID)
+		t.Errorf("Create() returned the first ticket's id: %d", other.ID)
 	}
 }
 
@@ -141,62 +144,63 @@ func TestGetTicketWithDetails(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pool := testdb.Setup(t)
+			repo := models.NewTicketRepository(pool)
 
 			// Seed known parents and a ticket so the test is independent of other data.
 			hall, seat, show := seedTicketParents(t, pool)
-			if _, err := models.CreateTicket(t.Context(), pool, seat.ID, hall.ID, show.ID); err != nil {
+			if _, err := repo.Create(t.Context(), seat.ID, hall.ID, show.ID); err != nil {
 				t.Fatalf("seed ticket: %v", err)
 			}
 
-			got, gotErr := models.GetTicketWithDetails(t.Context(), pool, tt.id)
+			got, gotErr := repo.GetWithDetails(t.Context(), tt.id)
 			if gotErr != nil {
 				if !tt.wantErr {
-					t.Errorf("GetTicketWithDetails() failed: %v", gotErr)
+					t.Errorf("GetWithDetails() failed: %v", gotErr)
 					return
 				}
 				if !errors.Is(gotErr, pgx.ErrNoRows) {
-					t.Errorf("GetTicketWithDetails() error = %v, want pgx.ErrNoRows", gotErr)
+					t.Errorf("GetWithDetails() error = %v, want pgx.ErrNoRows", gotErr)
 				}
 				return
 			}
 			if tt.wantErr {
-				t.Fatal("GetTicketWithDetails() succeeded unexpectedly")
+				t.Fatal("GetWithDetails() succeeded unexpectedly")
 			}
 
 			// The ticket's own fields.
 			if got.ID != 1 || got.SeatId != seat.ID || got.HallId != hall.ID || got.ShowId != show.ID {
-				t.Errorf("GetTicketWithDetails() ticket fields = %+v", got)
+				t.Errorf("GetWithDetails() ticket fields = %+v", got)
 			}
 
 			// The joined Seat (a free seat: no user).
 			if got.Seat == nil {
-				t.Fatal("GetTicketWithDetails() returned a nil Seat")
+				t.Fatal("GetWithDetails() returned a nil Seat")
 			}
 			if got.Seat.ID != seat.ID || got.Seat.SeatNumber != 1 || got.Seat.Status != models.Free {
-				t.Errorf("GetTicketWithDetails() Seat = %+v, want %+v", got.Seat, seat)
+				t.Errorf("GetWithDetails() Seat = %+v, want %+v", got.Seat, seat)
 			}
 			if got.Seat.User != nil {
-				t.Errorf("GetTicketWithDetails() Seat.User = %+v, want nil for a free seat", got.Seat.User)
+				t.Errorf("GetWithDetails() Seat.User = %+v, want nil for a free seat", got.Seat.User)
 			}
 			if got.Seat.Hall == nil || got.Seat.Hall.ID != hall.ID {
-				t.Errorf("GetTicketWithDetails() Seat.Hall = %+v, want hall id %d", got.Seat.Hall, hall.ID)
+				t.Errorf("GetWithDetails() Seat.Hall = %+v, want hall id %d", got.Seat.Hall, hall.ID)
 			}
 
 			// The joined Hall.
 			if got.Hall == nil {
-				t.Fatal("GetTicketWithDetails() returned a nil Hall")
+				t.Fatal("GetWithDetails() returned a nil Hall")
 			}
 			if got.Hall.ID != hall.ID || got.Hall.Name != hall.Name || got.Hall.Capacity != hall.Capacity {
-				t.Errorf("GetTicketWithDetails() Hall = %+v, want %+v", got.Hall, hall)
+				t.Errorf("GetWithDetails() Hall = %+v, want %+v", got.Hall, hall)
 			}
 
 			// The joined Show.
 			if got.Show == nil {
-				t.Fatal("GetTicketWithDetails() returned a nil Show")
+				t.Fatal("GetWithDetails() returned a nil Show")
 			}
 			if got.Show.ID != show.ID || got.Show.Name != show.Name ||
 				got.Show.DurationMinutes != show.DurationMinutes || got.Show.AuthorName != show.AuthorName {
-				t.Errorf("GetTicketWithDetails() Show = %+v, want %+v", got.Show, show)
+				t.Errorf("GetWithDetails() Show = %+v, want %+v", got.Show, show)
 			}
 		})
 	}
@@ -231,29 +235,30 @@ func TestGetTicketById(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pool := testdb.Setup(t)
+			repo := models.NewTicketRepository(pool)
 
 			// Seed known parents and a ticket so the test is independent of other data.
 			hall, seat, show := seedTicketParents(t, pool)
-			if _, err := models.CreateTicket(t.Context(), pool, seat.ID, hall.ID, show.ID); err != nil {
+			if _, err := repo.Create(t.Context(), seat.ID, hall.ID, show.ID); err != nil {
 				t.Fatalf("seed ticket: %v", err)
 			}
 
-			got, gotErr := models.GetTicketById(t.Context(), pool, tt.id)
+			got, gotErr := repo.GetById(t.Context(), tt.id)
 			if gotErr != nil {
 				if !tt.wantErr {
-					t.Errorf("GetTicketById() failed: %v", gotErr)
+					t.Errorf("GetById() failed: %v", gotErr)
 					return
 				}
 				if !errors.Is(gotErr, pgx.ErrNoRows) {
-					t.Errorf("GetTicketById() error = %v, want pgx.ErrNoRows", gotErr)
+					t.Errorf("GetById() error = %v, want pgx.ErrNoRows", gotErr)
 				}
 				return
 			}
 			if tt.wantErr {
-				t.Fatal("GetTicketById() succeeded unexpectedly")
+				t.Fatal("GetById() succeeded unexpectedly")
 			}
 			if got.ID != tt.want.ID || got.SeatId != seat.ID || got.HallId != hall.ID || got.ShowId != show.ID {
-				t.Errorf("GetTicketById() = %+v, want (%d, %d, %d, %d)",
+				t.Errorf("GetById() = %+v, want (%d, %d, %d, %d)",
 					got, tt.want.ID, seat.ID, hall.ID, show.ID)
 			}
 		})
@@ -263,80 +268,85 @@ func TestGetTicketById(t *testing.T) {
 func TestGetAllTickets(t *testing.T) {
 	t.Run("returns all tickets ordered by id", func(t *testing.T) {
 		pool := testdb.Setup(t)
+		repo := models.NewTicketRepository(pool)
+		seatRepo := models.NewSeatRepository(pool)
 		hall := seedHall(t, pool)
 		show := seedShow(t, pool)
 
-		seat1, err := models.CreateSeat(t.Context(), pool, 0, hall.ID, 1, models.Free, 100)
+		seat1, err := seatRepo.Create(t.Context(), 0, hall.ID, 1, models.Free, 100)
 		if err != nil {
 			t.Fatalf("seed first seat: %v", err)
 		}
-		seat2, err := models.CreateSeat(t.Context(), pool, 0, hall.ID, 2, models.Free, 100)
+		seat2, err := seatRepo.Create(t.Context(), 0, hall.ID, 2, models.Free, 100)
 		if err != nil {
 			t.Fatalf("seed second seat: %v", err)
 		}
 
-		ticket1, err := models.CreateTicket(t.Context(), pool, seat1.ID, hall.ID, show.ID)
+		ticket1, err := repo.Create(t.Context(), seat1.ID, hall.ID, show.ID)
 		if err != nil {
 			t.Fatalf("seed first ticket: %v", err)
 		}
-		ticket2, err := models.CreateTicket(t.Context(), pool, seat2.ID, hall.ID, show.ID)
+		ticket2, err := repo.Create(t.Context(), seat2.ID, hall.ID, show.ID)
 		if err != nil {
 			t.Fatalf("seed second ticket: %v", err)
 		}
 
-		got, err := models.GetAllTickets(t.Context(), pool)
+		got, err := repo.GetAll(t.Context())
 		if err != nil {
-			t.Fatalf("GetAllTickets() failed: %v", err)
+			t.Fatalf("GetAll() failed: %v", err)
 		}
 
 		if len(got) != 2 {
-			t.Fatalf("GetAllTickets() returned %d tickets, want 2", len(got))
+			t.Fatalf("GetAll() returned %d tickets, want 2", len(got))
 		}
 		if got[0].ID != ticket1.ID || got[0].SeatId != seat1.ID ||
 			got[0].HallId != hall.ID || got[0].ShowId != show.ID {
-			t.Errorf("GetAllTickets()[0] = %+v", got[0])
+			t.Errorf("GetAll()[0] = %+v", got[0])
 		}
 		if got[1].ID != ticket2.ID || got[1].SeatId != seat2.ID {
-			t.Errorf("GetAllTickets()[1] = %+v", got[1])
+			t.Errorf("GetAll()[1] = %+v", got[1])
 		}
 	})
 
 	t.Run("returns an empty list when there are no tickets", func(t *testing.T) {
 		pool := testdb.Setup(t)
+		repo := models.NewTicketRepository(pool)
 
-		got, err := models.GetAllTickets(t.Context(), pool)
+		got, err := repo.GetAll(t.Context())
 		if err != nil {
-			t.Fatalf("GetAllTickets() failed: %v", err)
+			t.Fatalf("GetAll() failed: %v", err)
 		}
 		if len(got) != 0 {
-			t.Errorf("GetAllTickets() returned %d tickets, want 0", len(got))
+			t.Errorf("GetAll() returned %d tickets, want 0", len(got))
 		}
 	})
 }
 
 func TestGetAllTicketsWithDetails(t *testing.T) {
 	pool := testdb.Setup(t)
+	repo := models.NewTicketRepository(pool)
+	seatRepo := models.NewSeatRepository(pool)
 	hall, seat1, show := seedTicketParents(t, pool)
 
-	seat2, err := models.CreateSeat(t.Context(), pool, 0, hall.ID, 2, models.Free, 100)
+	seat2, err := seatRepo.Create(t.Context(), 0, hall.ID, 2, models.Free, 100)
 	if err != nil {
 		t.Fatalf("seed second seat: %v", err)
 	}
-	ticket1, err := models.CreateTicket(t.Context(), pool, seat1.ID, hall.ID, show.ID)
+	ticket1, err := repo.Create(t.Context(), seat1.ID, hall.ID, show.ID)
 	if err != nil {
 		t.Fatalf("seed first ticket: %v", err)
 	}
-	ticket2, err := models.CreateTicket(t.Context(), pool, seat2.ID, hall.ID, show.ID)
+	ticket2, err := repo.Create(t.Context(), seat2.ID, hall.ID, show.ID)
 	if err != nil {
 		t.Fatalf("seed second ticket: %v", err)
 	}
 
-	got, err := models.GetAllTicketsWithDetails(t.Context(), pool)
+	got, err := repo.GetAllWithDetails(t.Context())
 	if err != nil {
-		t.Fatalf("GetAllTicketsWithDetails() failed: %v", err)
+		t.Fatalf("GetAllWithDetails() failed: %v", err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("GetAllTicketsWithDetails() returned %d tickets, want 2", len(got))
+		t.Fatalf("GetAllWithDetails() returned %d tickets, want 2", len(got))
 	}
 
 	for i, want := range []*models.Ticket{ticket1, ticket2} {
@@ -344,22 +354,22 @@ func TestGetAllTicketsWithDetails(t *testing.T) {
 
 		if ticket.ID != want.ID || ticket.SeatId != want.SeatId ||
 			ticket.HallId != hall.ID || ticket.ShowId != show.ID {
-			t.Errorf("GetAllTicketsWithDetails()[%d] = %+v", i, ticket)
+			t.Errorf("GetAllWithDetails()[%d] = %+v", i, ticket)
 		}
 		if ticket.Seat == nil {
-			t.Fatalf("GetAllTicketsWithDetails()[%d].Seat is nil", i)
+			t.Fatalf("GetAllWithDetails()[%d].Seat is nil", i)
 		}
 		if ticket.Seat.ID != want.SeatId {
-			t.Errorf("GetAllTicketsWithDetails()[%d].Seat.ID = %d, want %d", i, ticket.Seat.ID, want.SeatId)
+			t.Errorf("GetAllWithDetails()[%d].Seat.ID = %d, want %d", i, ticket.Seat.ID, want.SeatId)
 		}
 		if ticket.Seat.Hall == nil || ticket.Seat.Hall.ID != hall.ID {
-			t.Errorf("GetAllTicketsWithDetails()[%d].Seat.Hall = %+v, want hall %d", i, ticket.Seat.Hall, hall.ID)
+			t.Errorf("GetAllWithDetails()[%d].Seat.Hall = %+v, want hall %d", i, ticket.Seat.Hall, hall.ID)
 		}
 		if ticket.Hall == nil || ticket.Hall.ID != hall.ID || ticket.Hall.Name != hall.Name {
-			t.Errorf("GetAllTicketsWithDetails()[%d].Hall = %+v, want %+v", i, ticket.Hall, hall)
+			t.Errorf("GetAllWithDetails()[%d].Hall = %+v, want %+v", i, ticket.Hall, hall)
 		}
 		if ticket.Show == nil || ticket.Show.ID != show.ID || ticket.Show.Name != show.Name {
-			t.Errorf("GetAllTicketsWithDetails()[%d].Show = %+v, want %+v", i, ticket.Show, show)
+			t.Errorf("GetAllWithDetails()[%d].Show = %+v, want %+v", i, ticket.Show, show)
 		}
 	}
 }

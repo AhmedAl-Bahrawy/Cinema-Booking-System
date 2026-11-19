@@ -28,11 +28,19 @@ type UserSeat struct {
 	price      *int64
 }
 
-func CreateUser(ctx context.Context, pool *pgxpool.Pool, username string, fullName string) (*User, error) {
+type UserRepository struct {
+	db *pgxpool.Pool
+}
+
+func NewUserRepository(db *pgxpool.Pool) *UserRepository {
+	return &UserRepository{db: db}
+}
+
+func (r *UserRepository) Create(ctx context.Context, username string, fullName string) (*User, error) {
 	query := `INSERT INTO users (username, full_name) VALUES ($1, $2) RETURNING id, username, full_name`
 
 	var user User
-	err := pool.QueryRow(ctx, query, username, fullName).Scan(&user.ID, &user.Username, &user.FullName)
+	err := r.db.QueryRow(ctx, query, username, fullName).Scan(&user.ID, &user.Username, &user.FullName)
 	if err != nil {
 		return nil, err
 	}
@@ -40,11 +48,11 @@ func CreateUser(ctx context.Context, pool *pgxpool.Pool, username string, fullNa
 	return &user, nil
 }
 
-func GetUserById(ctx context.Context, pool *pgxpool.Pool, id int64) (*User, error) {
+func (r *UserRepository) GetById(ctx context.Context, id int64) (*User, error) {
 	query := `SELECT id, username, full_name FROM users WHERE id = $1`
 
 	var user User
-	err := pool.QueryRow(ctx, query, id).Scan(&user.ID, &user.Username, &user.FullName)
+	err := r.db.QueryRow(ctx, query, id).Scan(&user.ID, &user.Username, &user.FullName)
 	if err != nil {
 		return nil, err
 	}
@@ -52,10 +60,10 @@ func GetUserById(ctx context.Context, pool *pgxpool.Pool, id int64) (*User, erro
 	return &user, nil
 }
 
-func GetAllUsers(ctx context.Context, pool *pgxpool.Pool) ([]*User, error) {
+func (r *UserRepository) GetAll(ctx context.Context) ([]*User, error) {
 	query := `SELECT id, username, full_name FROM users ORDER BY id`
 
-	rows, err := pool.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query users: %w", err)
 	}
@@ -72,9 +80,9 @@ func GetAllUsers(ctx context.Context, pool *pgxpool.Pool) ([]*User, error) {
 	return users, nil
 }
 
-// GetAllUsersWithDetails returns every user with their seats filled in.
+// GetAllWithDetails returns every user with their seats filled in.
 // Users without seats still appear, with an empty Seats list.
-func GetAllUsersWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*User, error) {
+func (r *UserRepository) GetAllWithDetails(ctx context.Context) ([]*User, error) {
 	query := `
 	SELECT
 	    u.id, u.username, u.full_name,
@@ -83,7 +91,7 @@ func GetAllUsersWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*User, e
 	LEFT JOIN seats s ON s.user_id = u.id
 	ORDER BY u.id, s.id`
 
-	rows, err := pool.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query users with details: %w", err)
 	}

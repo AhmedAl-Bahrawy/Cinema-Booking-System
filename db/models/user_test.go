@@ -45,19 +45,20 @@ func TestCreateUser(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pool := testdb.Setup(t)
+			repo := models.NewUserRepository(pool)
 
-			got, gotErr := models.CreateUser(t.Context(), pool, tt.username, tt.fullName)
+			got, gotErr := repo.Create(t.Context(), tt.username, tt.fullName)
 			if gotErr != nil {
 				if !tt.wantErr {
-					t.Errorf("CreateUser() failed: %v", gotErr)
+					t.Errorf("Create() failed: %v", gotErr)
 				}
 				return
 			}
 			if tt.wantErr {
-				t.Fatal("CreateUser() succeeded unexpectedly")
+				t.Fatal("Create() succeeded unexpectedly")
 			}
 			if got.ID != tt.want.ID || got.Username != tt.want.Username || got.FullName != tt.want.FullName {
-				t.Errorf("CreateUser() = %+v, want %+v", got, tt.want)
+				t.Errorf("Create() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
@@ -67,18 +68,19 @@ func TestCreateUser(t *testing.T) {
 // the second insert with the same username must fail.
 func TestCreateUser_DuplicateUsername(t *testing.T) {
 	pool := testdb.Setup(t)
+	repo := models.NewUserRepository(pool)
 
-	first, err := models.CreateUser(t.Context(), pool, "dupe_user", "First User")
+	first, err := repo.Create(t.Context(), "dupe_user", "First User")
 	if err != nil {
-		t.Fatalf("CreateUser() first insert failed: %v", err)
+		t.Fatalf("Create() first insert failed: %v", err)
 	}
 
-	second, err := models.CreateUser(t.Context(), pool, "dupe_user", "Second User")
+	second, err := repo.Create(t.Context(), "dupe_user", "Second User")
 	if err == nil {
-		t.Errorf("CreateUser() succeeded unexpectedly for duplicate username: %+v", second)
+		t.Errorf("Create() succeeded unexpectedly for duplicate username: %+v", second)
 	}
 	if second != nil {
-		t.Errorf("CreateUser() returned a user on error: %+v", second)
+		t.Errorf("Create() returned a user on error: %+v", second)
 	}
 
 	// The first user must be untouched by the failed insert.
@@ -92,18 +94,19 @@ func TestCreateUser_DuplicateUsername(t *testing.T) {
 	}
 }
 
-// TestCreateUser_PersistsRow verifies that CreateUser actually wrote the row
+// TestCreateUser_PersistsRow verifies that Create actually wrote the row
 // to the database, not just returned a struct.
 func TestCreateUser_PersistsRow(t *testing.T) {
 	pool := testdb.Setup(t)
+	repo := models.NewUserRepository(pool)
 
-	created, err := models.CreateUser(t.Context(), pool, "persist_me", "Persisted User")
+	created, err := repo.Create(t.Context(), "persist_me", "Persisted User")
 	if err != nil {
-		t.Fatalf("CreateUser() failed: %v", err)
+		t.Fatalf("Create() failed: %v", err)
 	}
 
 	if created.ID <= 0 {
-		t.Fatalf("CreateUser() returned non-positive ID: %d", created.ID)
+		t.Fatalf("Create() returned non-positive ID: %d", created.ID)
 	}
 
 	var username, fullName string
@@ -150,28 +153,29 @@ func TestGetUserById(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pool := testdb.Setup(t)
+			repo := models.NewUserRepository(pool)
 
 			// Seed a known user so the test is independent of other data.
-			if _, err := models.CreateUser(t.Context(), pool, "ahmed", "Ahmed Al-Bahrawy"); err != nil {
+			if _, err := repo.Create(t.Context(), "ahmed", "Ahmed Al-Bahrawy"); err != nil {
 				t.Fatalf("seed user: %v", err)
 			}
 
-			got, gotErr := models.GetUserById(t.Context(), pool, tt.id)
+			got, gotErr := repo.GetById(t.Context(), tt.id)
 			if gotErr != nil {
 				if !tt.wantErr {
-					t.Errorf("GetUserById() failed: %v", gotErr)
+					t.Errorf("GetById() failed: %v", gotErr)
 					return
 				}
 				if !errors.Is(gotErr, pgx.ErrNoRows) {
-					t.Errorf("GetUserById() error = %v, want pgx.ErrNoRows", gotErr)
+					t.Errorf("GetById() error = %v, want pgx.ErrNoRows", gotErr)
 				}
 				return
 			}
 			if tt.wantErr {
-				t.Fatal("GetUserById() succeeded unexpectedly")
+				t.Fatal("GetById() succeeded unexpectedly")
 			}
 			if got.ID != tt.want.ID || got.Username != tt.want.Username || got.FullName != tt.want.FullName {
-				t.Errorf("GetUserById() = %+v, want %+v", got, tt.want)
+				t.Errorf("GetById() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
@@ -180,97 +184,101 @@ func TestGetUserById(t *testing.T) {
 func TestGetAllUsers(t *testing.T) {
 	t.Run("returns all users ordered by id", func(t *testing.T) {
 		pool := testdb.Setup(t)
+		repo := models.NewUserRepository(pool)
 
-		first, err := models.CreateUser(t.Context(), pool, "ahmed", "Ahmed Al-Bahrawy")
+		first, err := repo.Create(t.Context(), "ahmed", "Ahmed Al-Bahrawy")
 		if err != nil {
 			t.Fatalf("seed first user: %v", err)
 		}
-		second, err := models.CreateUser(t.Context(), pool, "sara", "Sara Ali")
+		second, err := repo.Create(t.Context(), "sara", "Sara Ali")
 		if err != nil {
 			t.Fatalf("seed second user: %v", err)
 		}
 
-		got, err := models.GetAllUsers(t.Context(), pool)
+		got, err := repo.GetAll(t.Context())
 		if err != nil {
-			t.Fatalf("GetAllUsers() failed: %v", err)
+			t.Fatalf("GetAll() failed: %v", err)
 		}
 
 		if len(got) != 2 {
-			t.Fatalf("GetAllUsers() returned %d users, want 2", len(got))
+			t.Fatalf("GetAll() returned %d users, want 2", len(got))
 		}
 		if got[0].ID != first.ID || got[0].Username != "ahmed" || got[0].FullName != "Ahmed Al-Bahrawy" {
-			t.Errorf("GetAllUsers()[0] = %+v, want %+v", got[0], first)
+			t.Errorf("GetAll()[0] = %+v, want %+v", got[0], first)
 		}
 		if got[1].ID != second.ID || got[1].Username != "sara" || got[1].FullName != "Sara Ali" {
-			t.Errorf("GetAllUsers()[1] = %+v, want %+v", got[1], second)
+			t.Errorf("GetAll()[1] = %+v, want %+v", got[1], second)
 		}
 	})
 
 	t.Run("returns an empty list when there are no users", func(t *testing.T) {
 		pool := testdb.Setup(t)
+		repo := models.NewUserRepository(pool)
 
-		got, err := models.GetAllUsers(t.Context(), pool)
+		got, err := repo.GetAll(t.Context())
 		if err != nil {
-			t.Fatalf("GetAllUsers() failed: %v", err)
+			t.Fatalf("GetAll() failed: %v", err)
 		}
 		if len(got) != 0 {
-			t.Errorf("GetAllUsers() returned %d users, want 0", len(got))
+			t.Errorf("GetAll() returned %d users, want 0", len(got))
 		}
 	})
 }
 
 func TestGetAllUsersWithDetails(t *testing.T) {
 	pool := testdb.Setup(t)
+	userRepo := models.NewUserRepository(pool)
+	seatRepo := models.NewSeatRepository(pool)
 
-	first, err := models.CreateUser(t.Context(), pool, "ahmed", "Ahmed Al-Bahrawy")
+	first, err := userRepo.Create(t.Context(), "ahmed", "Ahmed Al-Bahrawy")
 	if err != nil {
 		t.Fatalf("seed first user: %v", err)
 	}
-	second, err := models.CreateUser(t.Context(), pool, "sara", "Sara Ali")
+	second, err := userRepo.Create(t.Context(), "sara", "Sara Ali")
 	if err != nil {
 		t.Fatalf("seed second user: %v", err)
 	}
 	hall := seedHall(t, pool)
 
 	// The first user holds two seats; the second user has none.
-	seat1, err := models.CreateSeat(t.Context(), pool, first.ID, hall.ID, 1, models.Free, 100)
+	seat1, err := seatRepo.Create(t.Context(), first.ID, hall.ID, 1, models.Free, 100)
 	if err != nil {
 		t.Fatalf("seed first seat: %v", err)
 	}
-	seat2, err := models.CreateSeat(t.Context(), pool, first.ID, hall.ID, 2, models.Booked, 150)
+	seat2, err := seatRepo.Create(t.Context(), first.ID, hall.ID, 2, models.Booked, 150)
 	if err != nil {
 		t.Fatalf("seed second seat: %v", err)
 	}
 
-	got, err := models.GetAllUsersWithDetails(t.Context(), pool)
+	got, err := userRepo.GetAllWithDetails(t.Context())
 	if err != nil {
-		t.Fatalf("GetAllUsersWithDetails() failed: %v", err)
+		t.Fatalf("GetAllWithDetails() failed: %v", err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("GetAllUsersWithDetails() returned %d users, want 2", len(got))
+		t.Fatalf("GetAllWithDetails() returned %d users, want 2", len(got))
 	}
 
 	// First user: two seats attached.
 	if got[0].ID != first.ID {
-		t.Fatalf("GetAllUsersWithDetails()[0].ID = %d, want %d", got[0].ID, first.ID)
+		t.Fatalf("GetAllWithDetails()[0].ID = %d, want %d", got[0].ID, first.ID)
 	}
 	if len(got[0].Seats) != 2 {
-		t.Fatalf("GetAllUsersWithDetails()[0].Seats has %d seats, want 2", len(got[0].Seats))
+		t.Fatalf("GetAllWithDetails()[0].Seats has %d seats, want 2", len(got[0].Seats))
 	}
 	if got[0].Seats[0].ID != seat1.ID || got[0].Seats[0].SeatNumber != 1 ||
 		got[0].Seats[0].HallId != hall.ID || got[0].Seats[0].UserId != first.ID ||
 		got[0].Seats[0].Status != models.Free || got[0].Seats[0].Price != 100 {
-		t.Errorf("GetAllUsersWithDetails()[0].Seats[0] = %+v", got[0].Seats[0])
+		t.Errorf("GetAllWithDetails()[0].Seats[0] = %+v", got[0].Seats[0])
 	}
 	if got[0].Seats[1].ID != seat2.ID || got[0].Seats[1].Status != models.Booked || got[0].Seats[1].Price != 150 {
-		t.Errorf("GetAllUsersWithDetails()[0].Seats[1] = %+v", got[0].Seats[1])
+		t.Errorf("GetAllWithDetails()[0].Seats[1] = %+v", got[0].Seats[1])
 	}
 
 	// Second user: no seats.
 	if got[1].ID != second.ID {
-		t.Fatalf("GetAllUsersWithDetails()[1].ID = %d, want %d", got[1].ID, second.ID)
+		t.Fatalf("GetAllWithDetails()[1].ID = %d, want %d", got[1].ID, second.ID)
 	}
 	if len(got[1].Seats) != 0 {
-		t.Errorf("GetAllUsersWithDetails()[1].Seats has %d seats, want 0", len(got[1].Seats))
+		t.Errorf("GetAllWithDetails()[1].Seats has %d seats, want 0", len(got[1].Seats))
 	}
 }

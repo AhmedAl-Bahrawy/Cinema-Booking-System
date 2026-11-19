@@ -141,17 +141,29 @@ used outside their file.
 
 ---
 
-## Function naming convention
+## Repository naming convention
 
-Each model exposes the same predictable set of functions:
+Each model has its own repository and constructor:
 
-| Function | Returns | SQL |
-|----------|---------|-----|
-| `CreateX(...)` | `*X` | `INSERT ... RETURNING ...` |
-| `GetXById(...)` | `*X` | `SELECT ... WHERE id = $1` |
-| `GetAllX(...)` | `[]*X` | `SELECT ... ORDER BY id` |
-| `GetXWithDetails(...)` | `*X` with relations | `SELECT ... JOIN ... WHERE id = $1` |
-| `GetAllXWithDetails(...)` | `[]*X` with relations | `SELECT ... JOIN ... ORDER BY id` |
+```go
+type UserRepository struct {
+    db *pgxpool.Pool
+}
+
+func NewUserRepository(db *pgxpool.Pool) *UserRepository {
+    return &UserRepository{db: db}
+}
+```
+
+Each repository exposes the same predictable set of methods:
+
+| Method | Returns | SQL |
+|--------|---------|-----|
+| `Create(...)` | `*X` | `INSERT ... RETURNING ...` |
+| `GetById(...)` | `*X` | `SELECT ... WHERE id = $1` |
+| `GetAll(...)` | `[]*X` | `SELECT ... ORDER BY id` |
+| `GetWithDetails(...)` | `*X` with relations | `SELECT ... JOIN ... WHERE id = $1` |
+| `GetAllWithDetails(...)` | `[]*X` with relations | `SELECT ... JOIN ... ORDER BY id` |
 
 "Details" means the relation fields are filled:
 
@@ -163,7 +175,7 @@ Each model exposes the same predictable set of functions:
 | `Seat` | `User` (nil when free), `Hall` |
 | `Ticket` | `Seat` (with `Seat.Hall`), `Hall`, `Show` |
 
-"Plain" functions (`GetXById`, `GetAllX`) never JOIN; relation fields stay `nil`.
+"Plain" methods (`GetById`, `GetAll`) never JOIN; relation fields stay `nil`.
 That keeps the common, cheap queries fast.
 
 ---
@@ -173,11 +185,11 @@ That keeps the common, cheap queries fast.
 ### 1. Create — `INSERT ... RETURNING` + `QueryRow`
 
 ```go
-func CreateUser(ctx context.Context, pool *pgxpool.Pool, username, fullName string) (*User, error) {
+func (r *UserRepository) Create(ctx context.Context, username, fullName string) (*User, error) {
     query := `INSERT INTO users (username, full_name) VALUES ($1, $2) RETURNING id, username, full_name`
 
     var user User
-    err := pool.QueryRow(ctx, query, username, fullName).Scan(&user.ID, &user.Username, &user.FullName)
+    err := r.db.QueryRow(ctx, query, username, fullName).Scan(&user.ID, &user.Username, &user.FullName)
     if err != nil {
         return nil, err
     }
@@ -195,7 +207,7 @@ Plain by-id lookup:
 
 ```go
 var user User
-err := pool.QueryRow(ctx, query, id).Scan(&user.ID, &user.Username, &user.FullName)
+err := r.db.QueryRow(ctx, query, id).Scan(&user.ID, &user.Username, &user.FullName)
 ```
 
 If nothing matches, `pgx` returns `pgx.ErrNoRows` — tests assert exactly that.
@@ -204,13 +216,13 @@ Single row **with joins** uses `pgx.CollectOneRow`, which shares its scan logic
 with the list version:
 
 ```go
-rows, err := pool.Query(ctx, query, id)
+rows, err := r.db.Query(ctx, query, id)
 if err != nil {
     return nil, fmt.Errorf("query seat with details: %w", err)
 }
 
 seat, err := pgx.CollectOneRow(rows, func(row pgx.CollectableRow) (*Seat, error) {
-    return scanSeatWithDetails(row) // same helper used by GetAllSeatsWithDetails
+    return scanSeatWithDetails(row) // same helper used by GetAllWithDetails
 })
 ```
 
@@ -219,7 +231,7 @@ seat, err := pgx.CollectOneRow(rows, func(row pgx.CollectableRow) (*Seat, error)
 Simple list:
 
 ```go
-rows, err := pool.Query(ctx, query)
+rows, err := r.db.Query(ctx, query)
 if err != nil {
     return nil, fmt.Errorf("query users: %w", err)
 }
@@ -338,13 +350,13 @@ Hall → Seats → Seat.Hall → Seats → Seat.Hall → ... 💥
 So when filling a parent's child list, the **back-reference is deliberately left
 nil**:
 
-- `GetAllHallsWithDetails` leaves `seat.Hall == nil`
-- `GetAllUsersWithDetails` leaves `seat.User == nil`
-- `GetAllShowsWithDetails` leaves `ticket.Show == nil`
+- `HallRepository.GetAllWithDetails` leaves `seat.Hall == nil`
+- `UserRepository.GetAllWithDetails` leaves `seat.User == nil`
+- `ShowRepository.GetAllWithDetails` leaves `ticket.Show == nil`
 
 This is noted with a comment at each place. Do not "fix" it.
 
-At the top level the other direction is safe: `GetAllSeatsWithDetails` sets
+At the top level the other direction is safe: `SeatRepository.GetAllWithDetails` sets
 `seat.Hall` and `seat.User`, because `Hall.Seats`/`User.Seats` are left nil there.
 
 ---
@@ -354,33 +366,39 @@ At the top level the other direction is safe: `GetAllSeatsWithDetails` sets
 ```go
 ctx := context.Background()
 
+users := models.NewUserRepository(pool)
+halls := models.NewHallRepository(pool)
+shows := models.NewShowRepository(pool)
+seats := models.NewSeatRepository(pool)
+tickets := models.NewTicketRepository(pool)
+
 // Create
-user, err := models.CreateUser(ctx, pool, "ahmed", "Ahmed Al-Bahrawy")
-hall, err := models.CreateHall(ctx, pool, "Hall A", 100)
-show, err := models.CreateShow(ctx, pool, "Hamlet", 120, "Shakespeare")
+user, err := users.Create(ctx, "ahmed", "Ahmed Al-Bahrawy")
+hall, err := halls.Create(ctx, "Hall A", 100)
+show, err := shows.Create(ctx, "Hamlet", 120, "Shakespeare")
 
 // A free seat has no user yet (userId = 0 → NULL in the database).
-seat, err := models.CreateSeat(ctx, pool, 0, hall.ID, 1, models.Free, 100)
+seat, err := seats.Create(ctx, 0, hall.ID, 1, models.Free, 100)
 
 // Hold/book the seat for the user.
-seat, err = models.CreateSeat(ctx, pool, user.ID, hall.ID, 2, models.Booked, 150)
+seat, err = seats.Create(ctx, user.ID, hall.ID, 2, models.Booked, 150)
 
 // Sell the seat for a show.
-ticket, err := models.CreateTicket(ctx, pool, seat.ID, hall.ID, show.ID)
+ticket, err := tickets.Create(ctx, seat.ID, hall.ID, show.ID)
 
 // Plain reads (no JOINs)
-users, err := models.GetAllUsers(ctx, pool)
+allUsers, err := users.GetAll(ctx)
 
 // Reads with relations
-seat, err = models.GetSeatWithDetails(ctx, pool, seat.ID)   // seat.User, seat.Hall
-ticket, err = models.GetTicketWithDetails(ctx, pool, ticket.ID) // ticket.Seat/Hall/Show
-hall, err = models.GetAllHallsWithDetails(ctx, pool)        // hall.Seats (per hall)
+seat, err = seats.GetWithDetails(ctx, seat.ID)       // seat.User, seat.Hall
+ticket, err = tickets.GetWithDetails(ctx, ticket.ID) // ticket.Seat/Hall/Show
+allHalls, err := halls.GetAllWithDetails(ctx)        // hall.Seats (per hall)
 ```
 
 Checking for a missing row:
 
 ```go
-_, err := models.GetUserById(ctx, pool, 999)
+_, err := users.GetById(ctx, 999)
 if errors.Is(err, pgx.ErrNoRows) {
     // not found
 }
@@ -426,8 +444,9 @@ tests := []struct {
 for _, tt := range tests {
     t.Run(tt.name, func(t *testing.T) {
         pool := testdb.Setup(t)
+        repo := models.NewUserRepository(pool)
         // seed parents ...
-        got, gotErr := models.GetUserById(t.Context(), pool, tt.id)
+        got, gotErr := repo.GetById(t.Context(), tt.id)
         // assert ...
     })
 }
@@ -471,17 +490,19 @@ go test ./db/models -run 'TestGetAllSeatsWithDetails'
 
 ## How to add a new model
 
-Follow the same 5-function pattern so the rest of the codebase stays predictable:
+Follow the same repository pattern so the rest of the codebase stays predictable:
 
 1. **Migration** — add `db/migrations/<timestamp>_<name>.sql` with Up/Down.
 2. **Struct** in `db/models/<name>.go` with `db`/`json`/`binding` tags.
    Add relation fields only if useful, always with `db:"-"`.
-3. **Functions**:
-   - `CreateX` → `INSERT ... RETURNING` + `QueryRow`.
-   - `GetXById` → `QueryRow`; let `pgx.ErrNoRows` bubble up.
-   - `GetAllX` → `pool.Query` + `pgx.CollectRows`.
-   - `GetXWithDetails` → JOIN + `pgx.CollectOneRow` + shared scanner.
-   - `GetAllXWithDetails` → JOIN + `pgx.CollectRows` (+ grouping map for
+3. **Repository**:
+   - `type XRepository struct { db *pgxpool.Pool }`
+   - `func NewXRepository(db *pgxpool.Pool) *XRepository`
+   - `Create` → `INSERT ... RETURNING` + `QueryRow`.
+   - `GetById` → `QueryRow`; let `pgx.ErrNoRows` bubble up.
+   - `GetAll` → `r.db.Query` + `pgx.CollectRows`.
+   - `GetWithDetails` → JOIN + `pgx.CollectOneRow` + shared scanner.
+   - `GetAllWithDetails` → JOIN + `pgx.CollectRows` (+ grouping map for
      one-to-many).
 4. **Tests** in `<name>_test.go` using `testdb.Setup(t)`:
    - create happy path + constraint failure,
@@ -498,11 +519,12 @@ Follow the same 5-function pattern so the rest of the codebase stays predictable
 ```
 [ ] migration Up + Down
 [ ] struct + tags
-[ ] CreateX
-[ ] GetXById
-[ ] GetAllX
-[ ] GetXWithDetails (if relations exist)
-[ ] GetAllXWithDetails (if relations exist)
+[ ] XRepository + NewXRepository
+[ ] Create
+[ ] GetById
+[ ] GetAll
+[ ] GetWithDetails (if relations exist)
+[ ] GetAllWithDetails (if relations exist)
 [ ] tests: create / get / get-by-bad-id / getAll / details
 [ ] add table to TRUNCATE list
 [ ] go build ./... && go vet ./... && go test ./...

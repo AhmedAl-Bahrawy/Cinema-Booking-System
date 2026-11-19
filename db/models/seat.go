@@ -29,9 +29,17 @@ type Seat struct {
 	Hall *Hall `db:"-" json:"hall,omitempty" binding:"-"`
 }
 
-// CreateSeat inserts a seat. Pass userId = 0 for a free seat (no user yet);
+type SeatRepository struct {
+	db *pgxpool.Pool
+}
+
+func NewSeatRepository(db *pgxpool.Pool) *SeatRepository {
+	return &SeatRepository{db: db}
+}
+
+// Create inserts a seat. Pass userId = 0 for a free seat (no user yet);
 // any other value links the seat to that user (holding/booked).
-func CreateSeat(ctx context.Context, pool *pgxpool.Pool, userId, hallId int64, seatNumber uint32, status BookingStatus, price uint32) (*Seat, error) {
+func (r *SeatRepository) Create(ctx context.Context, userId, hallId int64, seatNumber uint32, status BookingStatus, price uint32) (*Seat, error) {
 	query := `INSERT INTO seats (user_id, hall_id, seat_number, status, price) VALUES ($1, $2, $3, $4, $5) RETURNING id, user_id, hall_id, seat_number, status, price`
 
 	// user_id is NULLABLE: 0 means "no user", which must be stored as NULL.
@@ -43,7 +51,7 @@ func CreateSeat(ctx context.Context, pool *pgxpool.Pool, userId, hallId int64, s
 	var seat Seat
 	var dbUserId *int64 // NULL until the seat is held/booked
 	var dbSeatNumber, dbPrice int64
-	err := pool.QueryRow(ctx, query, userIdArg, hallId, seatNumber, status, price).
+	err := r.db.QueryRow(ctx, query, userIdArg, hallId, seatNumber, status, price).
 		Scan(&seat.ID, &dbUserId, &seat.HallId, &dbSeatNumber, &seat.Status, &dbPrice)
 	if err != nil {
 		return nil, err
@@ -57,13 +65,13 @@ func CreateSeat(ctx context.Context, pool *pgxpool.Pool, userId, hallId int64, s
 	return &seat, nil
 }
 
-func GetSeatById(ctx context.Context, pool *pgxpool.Pool, id int64) (*Seat, error) {
+func (r *SeatRepository) GetById(ctx context.Context, id int64) (*Seat, error) {
 	query := `SELECT id, user_id, hall_id, seat_number, status, price FROM seats WHERE id = $1`
 
 	var seat Seat
 	var dbUserId *int64 // NULL until the seat is held/booked
 	var dbSeatNumber, dbPrice int64
-	err := pool.QueryRow(ctx, query, id).
+	err := r.db.QueryRow(ctx, query, id).
 		Scan(&seat.ID, &dbUserId, &seat.HallId, &dbSeatNumber, &seat.Status, &dbPrice)
 	if err != nil {
 		return nil, err
@@ -77,10 +85,10 @@ func GetSeatById(ctx context.Context, pool *pgxpool.Pool, id int64) (*Seat, erro
 	return &seat, nil
 }
 
-func GetAllSeats(ctx context.Context, pool *pgxpool.Pool) ([]*Seat, error) {
+func (r *SeatRepository) GetAll(ctx context.Context) ([]*Seat, error) {
 	query := `SELECT id, user_id, hall_id, seat_number, status, price FROM seats ORDER BY id`
 
-	rows, err := pool.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query seats: %w", err)
 	}
@@ -109,9 +117,9 @@ func GetAllSeats(ctx context.Context, pool *pgxpool.Pool) ([]*Seat, error) {
 	return seats, nil
 }
 
-// GetSeatWithDetails returns the seat with its Hall (and User, if any) filled
+// GetWithDetails returns the seat with its Hall (and User, if any) filled
 // in from a JOIN query. A free seat has no user, so User stays nil for it.
-func GetSeatWithDetails(ctx context.Context, pool *pgxpool.Pool, id int64) (*Seat, error) {
+func (r *SeatRepository) GetWithDetails(ctx context.Context, id int64) (*Seat, error) {
 	query := `
 	SELECT
 	    s.id, s.user_id, s.hall_id, s.seat_number, s.status, s.price,
@@ -122,7 +130,7 @@ func GetSeatWithDetails(ctx context.Context, pool *pgxpool.Pool, id int64) (*Sea
 	LEFT JOIN users u ON u.id = s.user_id
 	WHERE s.id = $1`
 
-	rows, err := pool.Query(ctx, query, id)
+	rows, err := r.db.Query(ctx, query, id)
 	if err != nil {
 		return nil, fmt.Errorf("query seat with details: %w", err)
 	}
@@ -137,9 +145,9 @@ func GetSeatWithDetails(ctx context.Context, pool *pgxpool.Pool, id int64) (*Sea
 	return seat, nil
 }
 
-// GetAllSeatsWithDetails returns every seat with its Hall (and User, if any)
+// GetAllWithDetails returns every seat with its Hall (and User, if any)
 // filled in from a JOIN query. Free seats have no user, so User stays nil.
-func GetAllSeatsWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*Seat, error) {
+func (r *SeatRepository) GetAllWithDetails(ctx context.Context) ([]*Seat, error) {
 	query := `
 	SELECT
 	    s.id, s.user_id, s.hall_id, s.seat_number, s.status, s.price,
@@ -150,7 +158,7 @@ func GetAllSeatsWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*Seat, e
 	LEFT JOIN users u ON u.id = s.user_id
 	ORDER BY s.id`
 
-	rows, err := pool.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query seats with details: %w", err)
 	}

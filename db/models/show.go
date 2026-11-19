@@ -27,11 +27,19 @@ type ShowTicket struct {
 	hallID          *int64
 }
 
-func CreateShow(ctx context.Context, pool *pgxpool.Pool, name string, durationMinutes int64, authorName string) (*Show, error) {
+type ShowRepository struct {
+	db *pgxpool.Pool
+}
+
+func NewShowRepository(db *pgxpool.Pool) *ShowRepository {
+	return &ShowRepository{db: db}
+}
+
+func (r *ShowRepository) Create(ctx context.Context, name string, durationMinutes int64, authorName string) (*Show, error) {
 	query := `INSERT INTO shows (name, duration_minutes, author_name) VALUES ($1, $2, $3) RETURNING id, name, duration_minutes, author_name`
 
 	var show Show
-	err := pool.QueryRow(ctx, query, name, durationMinutes, authorName).Scan(&show.ID, &show.Name, &show.DurationMinutes, &show.AuthorName)
+	err := r.db.QueryRow(ctx, query, name, durationMinutes, authorName).Scan(&show.ID, &show.Name, &show.DurationMinutes, &show.AuthorName)
 	if err != nil {
 		return nil, err
 	}
@@ -39,11 +47,11 @@ func CreateShow(ctx context.Context, pool *pgxpool.Pool, name string, durationMi
 	return &show, nil
 }
 
-func GetShowById(ctx context.Context, pool *pgxpool.Pool, id int64) (*Show, error) {
+func (r *ShowRepository) GetById(ctx context.Context, id int64) (*Show, error) {
 	query := `SELECT id, name, duration_minutes, author_name FROM shows WHERE id = $1`
 
 	var show Show
-	err := pool.QueryRow(ctx, query, id).Scan(&show.ID, &show.Name, &show.DurationMinutes, &show.AuthorName)
+	err := r.db.QueryRow(ctx, query, id).Scan(&show.ID, &show.Name, &show.DurationMinutes, &show.AuthorName)
 	if err != nil {
 		return nil, err
 	}
@@ -51,10 +59,10 @@ func GetShowById(ctx context.Context, pool *pgxpool.Pool, id int64) (*Show, erro
 	return &show, nil
 }
 
-func GetAllShows(ctx context.Context, pool *pgxpool.Pool) ([]*Show, error) {
+func (r *ShowRepository) GetAll(ctx context.Context) ([]*Show, error) {
 	query := `SELECT id, name, duration_minutes, author_name FROM shows ORDER BY id`
 
-	rows, err := pool.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query shows: %w", err)
 	}
@@ -71,9 +79,9 @@ func GetAllShows(ctx context.Context, pool *pgxpool.Pool) ([]*Show, error) {
 	return shows, nil
 }
 
-// GetAllShowsWithDetails returns every show with its tickets filled in.
+// GetAllWithDetails returns every show with its tickets filled in.
 // Shows without tickets still appear, with an empty Tickets list.
-func GetAllShowsWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*Show, error) {
+func (r *ShowRepository) GetAllWithDetails(ctx context.Context) ([]*Show, error) {
 	query := `
 	SELECT
 	    sh.id, sh.name, sh.duration_minutes, sh.author_name,
@@ -82,7 +90,7 @@ func GetAllShowsWithDetails(ctx context.Context, pool *pgxpool.Pool) ([]*Show, e
 	LEFT JOIN tickets t ON t.show_id = sh.id
 	ORDER BY sh.id, t.id`
 
-	rows, err := pool.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query shows with details: %w", err)
 	}

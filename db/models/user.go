@@ -17,6 +17,11 @@ type User struct {
 	Seats []*Seat `db:"-" json:"seats,omitempty" binding:"-"`
 }
 
+type UserReq struct {
+	Username string `db:"username" json:"username" binding:"required,min=3,max=100"`
+	FullName string `db:"full_name" json:"full_name" binding:"required,min=3,max=255"`
+}
+
 type UserSeat struct {
 	userID     int64
 	username   string

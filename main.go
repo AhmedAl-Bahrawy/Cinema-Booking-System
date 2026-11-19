@@ -2,11 +2,12 @@ package main
 
 import (
 	"log"
-	"net/http"
 	"os"
 
 	"github.com/AhmedAl-Bahrawy/Cinema-Booking-System/db"
-	"github.com/gin-gonic/gin"
+	"github.com/AhmedAl-Bahrawy/Cinema-Booking-System/db/models"
+	"github.com/AhmedAl-Bahrawy/Cinema-Booking-System/handlers"
+	"github.com/AhmedAl-Bahrawy/Cinema-Booking-System/router"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )
@@ -46,11 +47,19 @@ func main() {
 	}
 	defer pool.Close()
 
-	r := gin.Default()
-	r.GET("/ping", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "pong",
-		})
-	})
-	r.Run() // listens on 0.0.0.0:8080 by default
+	hallRep := models.NewHallRepository(pool)
+	seatRep := models.NewSeatRepository(pool)
+	showRep := models.NewShowRepository(pool)
+	ticketRep := models.NewTicketRepository(pool)
+	userRep := models.NewUserRepository(pool)
+
+	h := handlers.NewHandler(hallRep, seatRep, showRep, ticketRep, userRep)
+
+	r := router.SetupRouter(h)
+
+	err = r.Run(":8080")
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
 }

@@ -16,6 +16,11 @@ type Hall struct {
 	Seats []*Seat `db:"-" json:"seats,omitempty" binding:"-"`
 }
 
+type HallReq struct {
+	Name     string `db:"name"     json:"name"     binding:"required,min=1,max=255"`
+	Capacity uint32 `db:"capacity" json:"capacity" binding:"required,min=1"`
+}
+
 type HallSeat struct {
 	hallID     int64
 	name       string

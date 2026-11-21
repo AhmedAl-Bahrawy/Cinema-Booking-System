@@ -242,7 +242,7 @@ func TestGetAllUsersWithDetails(t *testing.T) {
 	hall := seedHall(t, pool)
 	show := seedShow(t, pool)
 
-	seat1 := seedSeat(t, pool, hall.ID, 1, 100)
+	seat1 := seedSeat(t, pool, hall.ID, 1, 1)
 
 	// The first user books the same physical seat for two shows on the same
 	// day; the second user has no tickets.
@@ -280,11 +280,23 @@ func TestGetAllUsersWithDetails(t *testing.T) {
 		if ticket.Seat == nil || ticket.Seat.ID != seat1.ID || ticket.Seat.SeatNumber != 1 {
 			t.Errorf("GetAllWithDetails()[0].Tickets[%d].Seat = %+v", i, ticket.Seat)
 		}
+		if ticket.Number != 1 || ticket.Price != 100 {
+			t.Errorf("GetAllWithDetails()[0].Tickets[%d] number/price = %d/%d, want 1/100",
+				i, ticket.Number, ticket.Price)
+		}
+		if ticket.Seat.Category == nil || ticket.Seat.Category.Name != "normal" ||
+			ticket.Seat.Category.PriceMultiplierPercent != 100 {
+			t.Errorf("GetAllWithDetails()[0].Tickets[%d].Seat.Category = %+v", i, ticket.Seat.Category)
+		}
 		if ticket.Seat.Hall == nil || ticket.Seat.Hall.ID != hall.ID {
 			t.Errorf("GetAllWithDetails()[0].Tickets[%d].Seat.Hall = %+v", i, ticket.Seat.Hall)
 		}
 		if ticket.Screening == nil || ticket.Screening.Show == nil || ticket.Screening.Show.ID != show.ID {
 			t.Errorf("GetAllWithDetails()[0].Tickets[%d].Screening = %+v", i, ticket.Screening)
+		}
+		if ticket.Screening.Show.Price != 100 {
+			t.Errorf("GetAllWithDetails()[0].Tickets[%d].Screening.Show.Price = %d, want 100",
+				i, ticket.Screening.Show.Price)
 		}
 		if ticket.User != nil {
 			t.Errorf("GetAllWithDetails()[0].Tickets[%d].User should be nil to avoid a cycle", i)

@@ -32,10 +32,15 @@ type UserTicket struct {
 	ticketID    *int64 // NULL when the user has no tickets
 	screeningID *int64
 	seatID      *int64
+	number      *int64
+	ticketPrice *int64
 	status      *int16
-	seatHallID  *int64
-	seatNumber  *int64
-	price       *int64
+
+	seatHallID         *int64
+	seatNumber         *int64
+	seatCategoryID     *int64
+	categoryName       *string
+	categoryMultiplier *int64
 
 	screeningHallID *int64
 	showID          *int64
@@ -47,6 +52,7 @@ type UserTicket struct {
 	showName        *string
 	durationMinutes *int64
 	authorName      *string
+	showPrice       *int64
 }
 
 type UserRepository struct {
@@ -108,14 +114,16 @@ func (r *UserRepository) GetAllWithDetails(ctx context.Context) ([]*User, error)
 	query := `
 	SELECT
 	    u.id, u.username, u.full_name,
-	    t.id, t.screening_id, t.seat_id, t.status,
-	    s.hall_id, s.seat_number, s.price,
+	    t.id, t.screening_id, t.seat_id, t.number, t.price, t.status,
+	    s.hall_id, s.seat_number, s.category_id,
+	    c.name, c.price_multiplier_percent,
 	    sc.hall_id, sc.show_id, sc.starts_at, sc.ends_at,
 	    h.id, h.name, h.capacity,
-	    sh.name, sh.duration_minutes, sh.author_name
+	    sh.name, sh.duration_minutes, sh.author_name, sh.price
 	FROM users u
 	LEFT JOIN tickets t ON t.user_id = u.id
 	LEFT JOIN seats s ON s.id = t.seat_id
+	LEFT JOIN seat_categories c ON c.id = s.category_id
 	LEFT JOIN screenings sc ON sc.id = t.screening_id
 	LEFT JOIN halls h ON h.id = sc.hall_id
 	LEFT JOIN shows sh ON sh.id = sc.show_id
@@ -130,11 +138,12 @@ func (r *UserRepository) GetAllWithDetails(ctx context.Context) ([]*User, error)
 		var r UserTicket
 		err := row.Scan(
 			&r.userID, &r.username, &r.fullName,
-			&r.ticketID, &r.screeningID, &r.seatID, &r.status,
-			&r.seatHallID, &r.seatNumber, &r.price,
+			&r.ticketID, &r.screeningID, &r.seatID, &r.number, &r.ticketPrice, &r.status,
+			&r.seatHallID, &r.seatNumber, &r.seatCategoryID,
+			&r.categoryName, &r.categoryMultiplier,
 			&r.screeningHallID, &r.showID, &r.startsAt, &r.endsAt,
 			&r.hallID, &r.hallName, &r.capacity,
-			&r.showName, &r.durationMinutes, &r.authorName,
+			&r.showName, &r.durationMinutes, &r.authorName, &r.showPrice,
 		)
 		return r, err
 	})
@@ -162,6 +171,7 @@ func (r *UserRepository) GetAllWithDetails(ctx context.Context) ([]*User, error)
 			Name:            *r.showName,
 			DurationMinutes: *r.durationMinutes,
 			AuthorName:      *r.authorName,
+			Price:           uint32(*r.showPrice),
 		}
 
 		// Ticket.User, Seat.Tickets, Screening.Tickets and Hall/Show
@@ -171,13 +181,20 @@ func (r *UserRepository) GetAllWithDetails(ctx context.Context) ([]*User, error)
 			ScreeningId: *r.screeningID,
 			SeatId:      *r.seatID,
 			UserId:      r.userID,
+			Number:      uint32(*r.number),
+			Price:       uint32(*r.ticketPrice),
 			Status:      TicketStatus(*r.status),
 			Seat: &Seat{
 				ID:         *r.seatID,
 				HallId:     *r.seatHallID,
 				SeatNumber: uint32(*r.seatNumber),
-				Price:      uint32(*r.price),
-				Hall:       hall,
+				CategoryId: *r.seatCategoryID,
+				Category: &SeatCategory{
+					ID:                     *r.seatCategoryID,
+					Name:                   *r.categoryName,
+					PriceMultiplierPercent: uint32(*r.categoryMultiplier),
+				},
+				Hall: hall,
 			},
 			Screening: &Screening{
 				ID:       *r.screeningID,

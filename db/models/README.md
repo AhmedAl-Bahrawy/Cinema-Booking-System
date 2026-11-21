@@ -28,6 +28,7 @@ If you come back to this code later, this file explains:
 | `show.go` | `Show` | `shows` | Plays/movies that are shown |
 | `screening.go` | `Screening` | `screenings` | A show playing in a hall during a time slot |
 | `seat.go` | `Seat` | `seats` | Physical seats inside a hall (no user, no status) |
+| `seat_category.go` | `SeatCategory` | `seat_categories` | Price multiplier per seat level (normal/premium/VIP) |
 | `ticket.go` | `Ticket` | `tickets` | A user's seat for one screening (the booking) |
 | `*_test.go` | — | — | Integration tests against a throwaway PostgreSQL database |
 
@@ -54,7 +55,7 @@ users                          halls
     │                            id (PK)
     │                            hall_id → halls.id (NOT NULL, ON DELETE CASCADE)
     │                            seat_number > 0
-    │                            price >= 0
+    │                            category_id → seat_categories.id
     │                            UNIQUE (hall_id, seat_number)
     │
     │                          screenings
@@ -72,14 +73,23 @@ users                          halls
                                screening_id → screenings.id (NOT NULL)
                                seat_id      → seats.id      (NOT NULL)
                                user_id      → users.id      (NOT NULL)
+                               number > 0   -- = seats.seat_number
+                               price >= 0   -- snapshot computed at sale
                                status 1|2|3
                                UNIQUE (screening_id, seat_id)
+                               UNIQUE (screening_id, number)
+
+seat_categories
+  id (PK)
+  name (UNIQUE)
+  price_multiplier_percent > 0   -- normal 100, premium 150, vip 200
 
 shows
   id (PK)
   name
   duration_minutes > 0
   author_name
+  price >= 0   -- base price for a normal seat
     │
     └──< screenings >── halls
 ```
@@ -89,7 +99,13 @@ Key rules enforced by the database (and verified by tests):
 - `users.username` is unique.
 - `halls.name` is unique.
 - A seat number is unique **per hall** (`UNIQUE (hall_id, seat_number)`).
-- A seat is **physical**: it has no `user_id` and no `status`.
+- A seat is **physical**: it has no `user_id` and no `status`. Its category
+  (`category_id`) decides the price multiplier.
+- A ticket's `number` is the hall seat number and is unique per screening
+  (`UNIQUE (screening_id, number)`), also enforced by the
+  `tickets_seat_number_check` trigger.
+- A ticket's `price` is computed at sale time:
+  `ROUND(show.price × seat_category.price_multiplier_percent / 100)`.
 - A **screening** is a show in a hall at a time. The exclusion constraint
   (`EXCLUDE USING gist (hall_id WITH =, tstzrange(starts_at, ends_at) WITH &&)`)
   guarantees a hall never plays two shows at the same time. It can play a
@@ -144,17 +160,21 @@ Relations are **never scanned directly**. They are filled by JOIN queries:
 
 ```go
 // Seat has:
-User *User `db:"-" json:"user,omitempty" binding:"-"`
-Hall *Hall `db:"-" json:"hall,omitempty" binding:"-"`
+Category *SeatCategory `db:"-" json:"category,omitempty" binding:"-"`
+Hall     *Hall         `db:"-" json:"hall,omitempty"     binding:"-"`
 
-// Ticket has:
-Seat *Seat `db:"-" json:"seat,omitempty" binding:"-"`
+// Screening has:
 Hall *Hall `db:"-" json:"hall,omitempty" binding:"-"`
 Show *Show `db:"-" json:"show,omitempty" binding:"-"`
 
-// User has:   Seats []*Seat
-// Hall has:   Seats []*Seat
-// Show has:   Tickets []*Ticket
+// Ticket has:
+Seat      *Seat      `db:"-" json:"seat,omitempty"      binding:"-"`
+User      *User      `db:"-" json:"user,omitempty"      binding:"-"`
+Screening *Screening `db:"-" json:"screening,omitempty" binding:"-"`
+
+// User has:        Tickets []*Ticket
+// Hall has:        Seats []*Seat, Screenings []*Screening
+// Show has:        Screenings []*Screening
 ```
 
 `db:"-"` means "don't map this to a column". `binding:"-"` means Gin ignores the
@@ -182,11 +202,12 @@ type UserReq struct {
 
 ### Helper row structs
 
-`UserSeat`, `HallSeat` and `ShowTicket` are **not models** — they exist only to hold
-one raw row of a one-to-many JOIN before the rows are grouped into
-`User.Seats`, `Hall.Seats` and `Show.Tickets`. They are intentionally unexported-ish
-(exported only for `pgx.CollectRows`), have no JSON/binding tags, and must not be
-used outside their file.
+`UserTicket`, `HallSeat`, `HallScreening` and `ShowScreening` are **not models** —
+they exist only to hold one raw row of a one-to-many JOIN before the rows are
+grouped into `User.Tickets`, `Hall.Seats`/`Hall.Screenings` and
+`Show.Screenings`. They are intentionally unexported-ish (exported only for
+`pgx.CollectRows`), have no JSON/binding tags, and must not be used outside their
+file.
 
 ---
 
@@ -210,23 +231,29 @@ Repositories share a predictable set of methods:
 |--------|---------|-----|------------|
 | `Create(...)` | `*X` | `INSERT ... RETURNING ...` | all models |
 | `GetById(...)` | `*X` | `SELECT ... WHERE id = $1` | all models |
-| `GetAll(...)` | `[]*X` | `SELECT ... ORDER BY id` | all models |
-| `GetWithDetails(...)` | `*X` with relations | `SELECT ... JOIN ... WHERE id = $1` | `Seat`, `Ticket` |
-| `GetAllWithDetails(...)` | `[]*X` with relations | `SELECT ... JOIN ... ORDER BY id` | all models |
+| `GetAll(...)` | `[]*X` | `SELECT ... ORDER BY ...` | all models |
+| `GetWithDetails(...)` | `*X` with relations | `SELECT ... JOIN ... WHERE id = $1` | `Screening`, `Seat`, `Ticket` |
+| `GetAllWithDetails(...)` | `[]*X` with relations | `SELECT ... JOIN ... ORDER BY ...` | all models |
+| `GetByHall(...)` | `[]*X` | `WHERE hall_id = $1` | `Seat`, `Screening` |
+| `GetByShow(...)` | `[]*Screening` | `WHERE show_id = $1` | `Screening` |
+| `GetByScreening(...)` | `[]*Ticket` | `WHERE screening_id = $1` | `Ticket` |
+| `GetByUser(...)` | `[]*Ticket` | `WHERE user_id = $1` | `Ticket` |
+| `CreateAt(...)` | `*Screening` | computes `ends_at` from the show duration | `Screening` |
 
 `User`, `Hall` and `Show` only have the list variant (`GetAllWithDetails`)
-because they are the "parent" side of a one-to-many relation; `Seat` and `Ticket`
-also have a single-row variant.
+because they are the "parent" side of a one-to-many relation; `Screening`,
+`Seat` and `Ticket` also have a single-row variant.
 
 "Details" means the relation fields are filled:
 
 | Model | Relations filled by `GetAllWithDetails` (and `GetWithDetails` where present) |
 |-------|--------------------------------------|
-| `User` | `Seats` |
-| `Hall` | `Seats` |
-| `Show` | `Tickets` |
-| `Seat` | `User` (nil when free), `Hall` |
-| `Ticket` | `Seat` (with `Seat.Hall`), `Hall`, `Show` |
+| `User` | `Tickets` (each with `Seat` → `Hall`, and `Screening` → `Hall` + `Show`) |
+| `Hall` | `Seats`, `Screenings` (each with `Show`) |
+| `Show` | `Screenings` (each with `Hall`) |
+| `Screening` | `Hall`, `Show` |
+| `Seat` | `Hall` |
+| `Ticket` | `Seat` (with `Seat.Hall`), `User`, `Screening` (with `Screening.Hall` + `Screening.Show`) |
 
 "Plain" methods (`GetById`, `GetAll`) never JOIN; relation fields stay `nil`.
 That keeps the common, cheap queries fast.
@@ -352,20 +379,18 @@ guaranteed by `ORDER BY parent_id, child_id`.
 
 ### NULL columns are scanned into pointers
 
-`seats.user_id` is nullable. Scanning a NULL into `int64` fails, so we scan into
-`*int64`, which stays `nil` for NULL:
+A LEFT JOIN parent with no children produces NULL child columns, and ticket
+relations are optional in one-to-many queries. Scanning a NULL into `int64`
+fails, so we scan into `*int64` / `*string`, which stay `nil` for NULL:
 
 ```go
-var dbUserId *int64
+var dbSeatID *int64
 // ...
-Scan(&seat.ID, &dbUserId, ...)
-if dbUserId != nil {
-    seat.UserId = *dbUserId
+Scan(&userID, &dbSeatID, ...)
+if dbSeatID != nil {
+    // attach the child
 }
 ```
-
-The public struct still uses `int64`; `0` means "no user". `CreateSeat` does the
-reverse: `userId == 0` is sent to Postgres as `NULL`.
 
 ### Why `uint32` fields are scanned via `int64`
 
@@ -380,16 +405,16 @@ row.Scan(&hall.ID, &hall.Name, &dbCapacity)
 hall.Capacity = uint32(dbCapacity)
 ```
 
-`seats.status` (`SMALLINT`) is scanned into `int16` in helper structs and cast to
-`BookingStatus`.
+`tickets.status` (`SMALLINT`) is scanned into `int16` in helper structs and cast
+to `TicketStatus`.
 
 ### `JOIN` vs `LEFT JOIN`
 
 - `JOIN` when the relation **must** exist: every seat has a hall, every ticket has
-  a seat/hall/show, every seat belongs to a hall.
-- `LEFT JOIN` when the relation is **optional**: a seat may have no user; a user,
-  hall or show may have no seats/tickets. Those parents must still appear in the
-  result, with `NULL` child columns.
+  a seat, user and screening, every screening has a hall and a show.
+- `LEFT JOIN` when the relation is **optional**: a user, hall or show may have no
+  tickets/seats/screenings. Those parents must still appear in the result, with
+  `NULL` child columns.
 
 ### Avoiding infinite JSON cycles
 
@@ -400,17 +425,26 @@ filled, JSON encoding would loop forever:
 Hall → Seats → Seat.Hall → Seats → Seat.Hall → ... 💥
 ```
 
+The same problem exists for `Hall → Screenings → Screening.Hall`,
+`Show → Screenings → Screening.Show`, `User → Tickets → Ticket.User`,
+`Screening → Tickets → Ticket.Screening`, and so on.
+
 So when filling a parent's child list, the **back-reference is deliberately left
 nil**:
 
-- `HallRepository.GetAllWithDetails` leaves `seat.Hall == nil`
-- `UserRepository.GetAllWithDetails` leaves `seat.User == nil`
-- `ShowRepository.GetAllWithDetails` leaves `ticket.Show == nil`
+- `HallRepository.GetAllWithDetails` leaves `seat.Hall` and `screening.Hall`
+  nil, and `screening.Show.Screenings` nil
+- `UserRepository.GetAllWithDetails` leaves `ticket.User` nil
+- `ShowRepository.GetAllWithDetails` leaves `screening.Show` nil
+- `TicketRepository` leaves every back-reference (`Seat.Tickets`, `User.Tickets`,
+  `Screening.Tickets`, child lists) nil
 
 This is noted with a comment at each place. Do not "fix" it.
 
-At the top level the other direction is safe: `SeatRepository.GetAllWithDetails` sets
-`seat.Hall` and `seat.User`, because `Hall.Seats`/`User.Seats` are left nil there.
+At the top level the other direction is safe: `SeatRepository.GetWithDetails` sets
+`seat.Hall`, `ScreeningRepository.GetWithDetails` sets `Hall` + `Show`, and
+`TicketRepository.GetWithDetails` sets `Seat`/`User`/`Screening`, because the
+parent child-lists are left nil there.
 
 ---
 
@@ -422,30 +456,40 @@ ctx := context.Background()
 users := models.NewUserRepository(pool)
 halls := models.NewHallRepository(pool)
 shows := models.NewShowRepository(pool)
+screenings := models.NewScreeningRepository(pool)
 seats := models.NewSeatRepository(pool)
 tickets := models.NewTicketRepository(pool)
 
-// Create
+// Create the catalogue and the room.
 user, err := users.Create(ctx, "ahmed", "Ahmed Al-Bahrawy")
 hall, err := halls.Create(ctx, "Hall A", 100)
 show, err := shows.Create(ctx, "Hamlet", 120, "Shakespeare")
 
-// A free seat has no user yet (userId = 0 → NULL in the database).
-seat, err := seats.Create(ctx, 0, hall.ID, 1, models.Free, 100)
+// Physical seats belong to the hall, not to a user.
+seat, err := seats.Create(ctx, hall.ID, 1, 100)
 
-// Hold/book the seat for the user.
-seat, err = seats.Create(ctx, user.ID, hall.ID, 2, models.Booked, 150)
+// Schedule Hamlet in Hall A. EndsAt is calculated from the show duration
+// (120 minutes), so this screening is 10:00–12:00.
+screening, err := screenings.CreateAt(ctx, hall.ID, show.ID, startsAt)
 
-// Sell the seat for a show.
-ticket, err := tickets.Create(ctx, seat.ID, hall.ID, show.ID)
+// A later show in the same hall is allowed because it does not overlap.
+another, err := screenings.CreateAt(ctx, hall.ID, show.ID, startsAt.Add(3*time.Hour))
+
+// Sell the seat to the user for the first screening.
+ticket, err := tickets.Create(ctx, screening.ID, seat.ID, user.ID, models.Booked)
+
+// The same physical seat can be sold again for the later screening, even to
+// the same user.
+ticket2, err := tickets.Create(ctx, another.ID, seat.ID, user.ID, models.Booked)
 
 // Plain reads (no JOINs)
 allUsers, err := users.GetAll(ctx)
 
 // Reads with relations
-seat, err = seats.GetWithDetails(ctx, seat.ID)       // seat.User, seat.Hall
-ticket, err = tickets.GetWithDetails(ctx, ticket.ID) // ticket.Seat/Hall/Show
-allHalls, err := halls.GetAllWithDetails(ctx)        // hall.Seats (per hall)
+seat, err = seats.GetWithDetails(ctx, seat.ID)             // seat.Hall
+ticket, err = tickets.GetWithDetails(ctx, ticket.ID)       // ticket.Seat/User/Screening (with Hall + Show)
+screening, err = screenings.GetWithDetails(ctx, screening.ID) // screening.Hall/Show
+allHalls, err := halls.GetAllWithDetails(ctx)              // hall.Seats + hall.Screenings
 ```
 
 Checking for a missing row:
@@ -513,15 +557,26 @@ The tests also cover database constraints beyond the happy path:
 | `TestCreateHall_DuplicateName` | `halls.name UNIQUE` |
 | `TestCreateShow` (zero duration) | `duration_minutes > 0` |
 | `TestCreateSeat_DuplicateSeatNumberInHall` | `UNIQUE (hall_id, seat_number)` |
-| `TestCreateTicket_DuplicateSeatForShow` | `UNIQUE (show_id, seat_id)` |
+| `TestCreateSeatCategory_DuplicateName` | `seat_categories.name UNIQUE` |
+| `TestCreateSeatCategory` (zero multiplier) | `price_multiplier_percent > 0` |
+| `TestCreateScreening_Overlap` | `screenings_hall_no_overlap` EXCLUDE constraint |
+| `TestCreateScreening` (bad times) | `screenings_time_valid` CHECK |
+| `TestCreateScreening_SameHallDifferentShowsSameDay` | a hall can change show later in the day |
+| `TestCreateTicket_DoubleBooking` | `UNIQUE (screening_id, seat_id)` |
+| `TestCreateTicket_PricingBySeatCategory` | ticket number + price formula per category |
+| `TestCreateTicket_SeatReusedAcrossScreenings` | a seat is reusable after a screening |
+| `TestCreateTicket_SeatHallMustMatchScreening` | ticket seat/hall consistency |
 | `TestCreateTicket` (bad FK ids) | foreign keys |
 | `TestGetXById` (id `0`, `999`) | `pgx.ErrNoRows` |
 
 Shared seed helpers (defined once, reused by other test files in the same
-`models_test` package):
+`models_test` package, in `helpers_test.go`):
 
 - `seedHall`, `seedUser`, `seedShow` — create one known parent.
-- `seedTicketParents` — creates a hall + seat + show for ticket tests.
+- `seedSeatCategory` — creates a custom seat category.
+- `seedSeat` — creates a physical seat in a hall.
+- `seedScreening` — schedules a show in a hall via `CreateAt`.
+- `seedTicketParents` — creates a hall + seat + show + screening for ticket tests.
 
 > Note: since `User`, `Hall` and `Show` now contain slices, they are not
 > comparable with `*got != *tt.want`. Compare their fields individually in tests.
@@ -564,7 +619,7 @@ Follow the same repository pattern so the rest of the codebase stays predictable
    - `GetAll...WithDetails` with a parent that has children **and** one with none.
 5. **`internal/testdb/testdb.go`** — add the new table to the `TRUNCATE` cleanup:
    ```go
-   TRUNCATE users, halls, shows, seats, tickets, <new_table> RESTART IDENTITY CASCADE
+   TRUNCATE users, halls, shows, seats, screenings, tickets, <new_table> RESTART IDENTITY CASCADE
    ```
 
 ### Quick reference checklist

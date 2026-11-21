@@ -70,6 +70,7 @@ Cinema-Booking-System/
 │       ├── show.go
 │       ├── screening.go        # A show playing in a hall during a time slot
 │       ├── seat.go
+│       ├── seat_category.go    # Price multiplier per seat level
 │       ├── ticket.go
 │       ├── *_test.go           # Integration tests for every repository
 │       └── README.md           # Deep dive into the models/repository layer
@@ -77,7 +78,9 @@ Cinema-Booking-System/
 │   ├── handlers.go             # Handler struct holding all repositories
 │   ├── user.go                 # CreateUser handler + request validation
 │   ├── hall.go                 # CreateHall
+│   ├── show.go                 # CreateShow / GetShow
 │   ├── seat.go                 # CreateSeat / GetSeat
+│   ├── seat_category.go        # Seat category CRUD helpers
 │   ├── screening.go            # CreateScreening / GetScreening
 │   ├── ticket.go               # CreateTicket / GetTicket
 │   └── README.md               # Endpoint reference and handler conventions
@@ -191,11 +194,15 @@ go build ./... && go vet ./...
 ```
 users (id, username UNIQUE, full_name)
 halls (id, name UNIQUE, capacity >= 0)
-shows (id, name, duration_minutes > 0, author_name)
+shows (id, name, duration_minutes > 0, author_name, price >= 0)
 
-seats (id, hall_id → halls.id, seat_number > 0, price >= 0)
+seat_categories (id, name UNIQUE, price_multiplier_percent > 0)
+                 -- seeded: normal 100, premium 150, vip 200
+
+seats (id, hall_id → halls.id, seat_number > 0,
+       category_id → seat_categories.id)
        UNIQUE (hall_id, seat_number)
-       -- physical seats only: no user, no booking status
+       -- physical seats only: no user, no booking status, no price
 
 screenings (id, hall_id → halls.id, show_id → shows.id,
             starts_at, ends_at)
@@ -204,9 +211,29 @@ screenings (id, hall_id → halls.id, show_id → shows.id,
             -- one hall can never play two shows at the same time
 
 tickets (id, screening_id → screenings.id, seat_id → seats.id,
-         user_id → users.id, status 1|2|3)
-         UNIQUE (screening_id, seat_id)  -- a seat is sold once per screening
+         user_id → users.id, number > 0, price >= 0, status 1|2|3)
+         UNIQUE (screening_id, seat_id)   -- a seat is sold once per screening
+         UNIQUE (screening_id, number)    -- ticket number = hall seat number
 ```
+
+### Ticket number and price
+
+- `tickets.number` is copied from `seats.seat_number` (the seat number inside
+  the hall) and kept in sync by the `tickets_seat_number_check` trigger.
+- `tickets.price` is a snapshot computed when the ticket is sold:
+
+  ```
+  ticket.price = ROUND(show.price × seat_category.price_multiplier_percent / 100)
+  ```
+
+  | Category | Multiplier | Show price | Ticket price |
+  |----------|-----------|------------|--------------|
+  | normal   | 100%      | 80         | 80           |
+  | premium  | 150%      | 80         | 120          |
+  | vip      | 200%      | 80         | 160          |
+  | box      | 125%      | 80         | 100          |
+
+  Custom categories can be added with `POST /seat-category`.
 
 ### Relations
 
@@ -217,13 +244,20 @@ user ──< tickets >── seat ──> hall ──< screenings >── show
                         (same hall)
 ```
 
-- A **seat** is physical and reusable. It belongs to exactly one hall and has
-  no user or status.
+- A **seat** is physical and reusable. It belongs to exactly one hall, has no
+  user or status, and has a category (normal / premium / VIP) instead of a
+  fixed price.
+- A **seat category** sets the price multiplier over the show's base price.
 - A **screening** is "this show plays in this hall at this time". A hall can
   show different films during the same day, but never two at the same time.
-- A **ticket** is the booking: it names the seat, the user, and the screening.
-  The same seat can therefore be sold to the same user (or another user) for a
-  later screening on the same day.
+- A **ticket** is the booking: it names the seat, the user, and the screening,
+  and stores the hall seat number and the computed price. The same seat can
+  therefore be sold to the same user (or another user) for a later screening on
+  the same day.
+
+Relations: `User` → `Tickets`, `Hall` → `Seats` + `Screenings`,
+`Show` → `Screenings`, `Seat` → `Hall` + `SeatCategory`,
+`Ticket` → `Seat` + `User` + `Screening`.
 
 ### Ticket status values
 

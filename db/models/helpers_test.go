@@ -31,16 +31,29 @@ func seedUser(t *testing.T, pool *pgxpool.Pool) *models.User {
 
 func seedShow(t *testing.T, pool *pgxpool.Pool) *models.Show {
 	t.Helper()
-	show, err := models.NewShowRepository(pool).Create(t.Context(), "Hamlet", 120, "Shakespeare")
+	// Base price for a normal seat.
+	show, err := models.NewShowRepository(pool).Create(t.Context(), "Hamlet", 120, "Shakespeare", 100)
 	if err != nil {
 		t.Fatalf("seed show: %v", err)
 	}
 	return show
 }
 
-func seedSeat(t *testing.T, pool *pgxpool.Pool, hallId int64, seatNumber uint32, price uint32) *models.Seat {
+// seedSeatCategory creates a new category and returns its id.
+func seedSeatCategory(t *testing.T, pool *pgxpool.Pool, name string, multiplier uint32) *models.SeatCategory {
 	t.Helper()
-	seat, err := models.NewSeatRepository(pool).Create(t.Context(), hallId, seatNumber, price)
+	category, err := models.NewSeatCategoryRepository(pool).Create(t.Context(), name, multiplier)
+	if err != nil {
+		t.Fatalf("seed seat category: %v", err)
+	}
+	return category
+}
+
+// seedSeat creates a physical seat. categoryId 0 means the normal category
+// (the repository defaults it to 1).
+func seedSeat(t *testing.T, pool *pgxpool.Pool, hallId int64, seatNumber uint32, categoryId int64) *models.Seat {
+	t.Helper()
+	seat, err := models.NewSeatRepository(pool).Create(t.Context(), hallId, seatNumber, categoryId)
 	if err != nil {
 		t.Fatalf("seed seat: %v", err)
 	}
@@ -63,7 +76,7 @@ func seedScreening(t *testing.T, pool *pgxpool.Pool, hallId, showId int64, start
 func seedTicketParents(t *testing.T, pool *pgxpool.Pool) (*models.Hall, *models.Seat, *models.Show, *models.Screening) {
 	t.Helper()
 	hall := seedHall(t, pool)
-	seat := seedSeat(t, pool, hall.ID, 1, 100)
+	seat := seedSeat(t, pool, hall.ID, 1, 1)
 	show := seedShow(t, pool)
 	screening := seedScreening(t, pool, hall.ID, show.ID, screeningBase)
 	return hall, seat, show, screening

@@ -182,7 +182,7 @@ func (r *ScreeningRepository) GetWithDetails(ctx context.Context, id int64) (*Sc
 	SELECT
 	    sc.id, sc.hall_id, sc.show_id, sc.starts_at, sc.ends_at,
 	    h.id, h.name, h.capacity,
-	    sh.id, sh.name, sh.duration_minutes, sh.author_name
+	    sh.id, sh.name, sh.duration_minutes, sh.author_name, sh.price
 	FROM screenings sc
 	JOIN halls h  ON h.id  = sc.hall_id
 	JOIN shows sh ON sh.id = sc.show_id
@@ -209,7 +209,7 @@ func (r *ScreeningRepository) GetAllWithDetails(ctx context.Context) ([]*Screeni
 	SELECT
 	    sc.id, sc.hall_id, sc.show_id, sc.starts_at, sc.ends_at,
 	    h.id, h.name, h.capacity,
-	    sh.id, sh.name, sh.duration_minutes, sh.author_name
+	    sh.id, sh.name, sh.duration_minutes, sh.author_name, sh.price
 	FROM screenings sc
 	JOIN halls h  ON h.id  = sc.hall_id
 	JOIN shows sh ON sh.id = sc.show_id
@@ -236,18 +236,19 @@ func scanScreeningWithDetails(row pgx.CollectableRow) (*Screening, error) {
 	hall := Hall{}
 	show := Show{}
 
-	var dbCapacity int64
+	var dbCapacity, dbPrice int64
 
 	err := row.Scan(
 		&screening.ID, &screening.HallId, &screening.ShowId, &screening.StartsAt, &screening.EndsAt,
 		&hall.ID, &hall.Name, &dbCapacity,
-		&show.ID, &show.Name, &show.DurationMinutes, &show.AuthorName,
+		&show.ID, &show.Name, &show.DurationMinutes, &show.AuthorName, &dbPrice,
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	hall.Capacity = uint32(dbCapacity)
+	show.Price = uint32(dbPrice)
 
 	// Leave Hall.Screenings and Show.Screenings nil to avoid JSON cycles.
 	screening.Hall = &hall

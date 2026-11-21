@@ -14,9 +14,17 @@ type Show struct {
 	Name            string `db:"name"             json:"name"             binding:"required,min=1,max=255"`
 	DurationMinutes int64  `db:"duration_minutes" json:"duration_minutes" binding:"required,min=1"` // per-minutes
 	AuthorName      string `db:"author_name"      json:"author_name"      binding:"required,min=1,max=255"`
+	Price           uint32 `db:"price"            json:"price"            binding:"gte=0"` // base price for a normal seat
 
 	// A show reaches a hall through screenings: show → screenings → hall.
 	Screenings []*Screening `db:"-" json:"screenings,omitempty" binding:"-"`
+}
+
+type ShowReq struct {
+	Name            string `db:"name"             json:"name"             binding:"required,min=1,max=255"`
+	DurationMinutes int64  `db:"duration_minutes" json:"duration_minutes" binding:"required,min=1"`
+	AuthorName      string `db:"author_name"      json:"author_name"      binding:"required,min=1,max=255"`
+	Price           uint32 `db:"price"            json:"price"            binding:"gte=0"`
 }
 
 type ShowScreening struct {
@@ -24,6 +32,7 @@ type ShowScreening struct {
 	name            string
 	durationMinutes int64
 	authorName      string
+	price           int64
 	screeningID     *int64 // NULL when the show has no screenings
 	hallID          *int64
 	startsAt        *time.Time
@@ -40,32 +49,41 @@ func NewShowRepository(db *pgxpool.Pool) *ShowRepository {
 	return &ShowRepository{db: db}
 }
 
-func (r *ShowRepository) Create(ctx context.Context, name string, durationMinutes int64, authorName string) (*Show, error) {
-	query := `INSERT INTO shows (name, duration_minutes, author_name) VALUES ($1, $2, $3) RETURNING id, name, duration_minutes, author_name`
+func (r *ShowRepository) Create(ctx context.Context, name string, durationMinutes int64, authorName string, price uint32) (*Show, error) {
+	query := `
+	INSERT INTO shows (name, duration_minutes, author_name, price)
+	VALUES ($1, $2, $3, $4)
+	RETURNING id, name, duration_minutes, author_name, price`
 
 	var show Show
-	err := r.db.QueryRow(ctx, query, name, durationMinutes, authorName).Scan(&show.ID, &show.Name, &show.DurationMinutes, &show.AuthorName)
+	var dbPrice int64
+	err := r.db.QueryRow(ctx, query, name, durationMinutes, authorName, price).
+		Scan(&show.ID, &show.Name, &show.DurationMinutes, &show.AuthorName, &dbPrice)
 	if err != nil {
 		return nil, err
 	}
+	show.Price = uint32(dbPrice)
 
 	return &show, nil
 }
 
 func (r *ShowRepository) GetById(ctx context.Context, id int64) (*Show, error) {
-	query := `SELECT id, name, duration_minutes, author_name FROM shows WHERE id = $1`
+	query := `SELECT id, name, duration_minutes, author_name, price FROM shows WHERE id = $1`
 
 	var show Show
-	err := r.db.QueryRow(ctx, query, id).Scan(&show.ID, &show.Name, &show.DurationMinutes, &show.AuthorName)
+	var dbPrice int64
+	err := r.db.QueryRow(ctx, query, id).
+		Scan(&show.ID, &show.Name, &show.DurationMinutes, &show.AuthorName, &dbPrice)
 	if err != nil {
 		return nil, err
 	}
+	show.Price = uint32(dbPrice)
 
 	return &show, nil
 }
 
 func (r *ShowRepository) GetAll(ctx context.Context) ([]*Show, error) {
-	query := `SELECT id, name, duration_minutes, author_name FROM shows ORDER BY id`
+	query := `SELECT id, name, duration_minutes, author_name, price FROM shows ORDER BY id`
 
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
@@ -74,8 +92,13 @@ func (r *ShowRepository) GetAll(ctx context.Context) ([]*Show, error) {
 
 	shows, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (*Show, error) {
 		var show Show
-		err := row.Scan(&show.ID, &show.Name, &show.DurationMinutes, &show.AuthorName)
-		return &show, err
+		var dbPrice int64
+		err := row.Scan(&show.ID, &show.Name, &show.DurationMinutes, &show.AuthorName, &dbPrice)
+		if err != nil {
+			return nil, err
+		}
+		show.Price = uint32(dbPrice)
+		return &show, nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("collect shows: %w", err)
@@ -90,7 +113,7 @@ func (r *ShowRepository) GetAll(ctx context.Context) ([]*Show, error) {
 func (r *ShowRepository) GetAllWithDetails(ctx context.Context) ([]*Show, error) {
 	query := `
 	SELECT
-	    sh.id, sh.name, sh.duration_minutes, sh.author_name,
+	    sh.id, sh.name, sh.duration_minutes, sh.author_name, sh.price,
 	    sc.id, sc.hall_id, sc.starts_at, sc.ends_at,
 	    h.name, h.capacity
 	FROM shows sh
@@ -106,7 +129,7 @@ func (r *ShowRepository) GetAllWithDetails(ctx context.Context) ([]*Show, error)
 	raw, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (ShowScreening, error) {
 		var r ShowScreening
 		err := row.Scan(
-			&r.showID, &r.name, &r.durationMinutes, &r.authorName,
+			&r.showID, &r.name, &r.durationMinutes, &r.authorName, &r.price,
 			&r.screeningID, &r.hallID, &r.startsAt, &r.endsAt,
 			&r.hallName, &r.capacity,
 		)
@@ -122,7 +145,13 @@ func (r *ShowRepository) GetAllWithDetails(ctx context.Context) ([]*Show, error)
 	for _, r := range raw {
 		show, ok := byID[r.showID]
 		if !ok {
-			show = &Show{ID: r.showID, Name: r.name, DurationMinutes: r.durationMinutes, AuthorName: r.authorName}
+			show = &Show{
+				ID:              r.showID,
+				Name:            r.name,
+				DurationMinutes: r.durationMinutes,
+				AuthorName:      r.authorName,
+				Price:           uint32(r.price),
+			}
 			byID[r.showID] = show
 			shows = append(shows, show)
 		}

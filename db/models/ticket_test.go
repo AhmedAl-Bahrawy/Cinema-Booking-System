@@ -77,7 +77,7 @@ func TestCreateTicket(t *testing.T) {
 				if err != nil {
 					t.Fatalf("seed other hall: %v", err)
 				}
-				otherSeat := seedSeat(t, pool, otherHall.ID, 1, 100)
+				otherSeat := seedSeat(t, pool, otherHall.ID, 1, 1)
 				seatID = otherSeat.ID
 			case "missing":
 				seatID = 999
@@ -110,6 +110,11 @@ func TestCreateTicket(t *testing.T) {
 			if got.ID != 1 || got.ScreeningId != screening.ID || got.SeatId != seat.ID ||
 				got.UserId != user.ID || got.Status != tt.status {
 				t.Errorf("Create() = %+v", got)
+			}
+			// The normal seat number becomes the ticket number, and the price is
+			// show.price (100) × normal multiplier (100%) = 100.
+			if got.Number != 1 || got.Price != 100 {
+				t.Errorf("Create() number/price = %d/%d, want 1/100", got.Number, got.Price)
 			}
 			if got.SeatId != seat.ID || seat.HallId != hall.ID {
 				t.Errorf("ticket seat %d does not belong to hall %d", got.SeatId, hall.ID)
@@ -184,7 +189,7 @@ func TestCreateTicket_SeatHallMustMatchScreening(t *testing.T) {
 		t.Fatalf("seed hall B: %v", err)
 	}
 	show := seedShow(t, pool)
-	seatInA := seedSeat(t, pool, hallA.ID, 1, 100)
+	seatInA := seedSeat(t, pool, hallA.ID, 1, 1)
 	screeningInB := seedScreening(t, pool, hallB.ID, show.ID, screeningBase)
 
 	if _, err := ticketRepo.Create(t.Context(), screeningInB.ID, seatInA.ID, user.ID, models.Booked); err == nil {
@@ -241,13 +246,20 @@ func TestGetTicketWithDetails(t *testing.T) {
 				got.UserId != user.ID || got.Status != models.Booked {
 				t.Errorf("GetWithDetails() ticket fields = %+v", got)
 			}
+			if got.Number != 1 || got.Price != 100 {
+				t.Errorf("GetWithDetails() number/price = %d/%d, want 1/100", got.Number, got.Price)
+			}
 
-			// Ticket → Seat → Hall.
+			// Ticket → Seat → Category → Hall.
 			if got.Seat == nil {
 				t.Fatal("GetWithDetails() returned a nil Seat")
 			}
 			if got.Seat.ID != seat.ID || got.Seat.SeatNumber != 1 {
 				t.Errorf("GetWithDetails() Seat = %+v", got.Seat)
+			}
+			if got.Seat.Category == nil || got.Seat.Category.Name != "normal" ||
+				got.Seat.Category.PriceMultiplierPercent != 100 {
+				t.Errorf("GetWithDetails() Seat.Category = %+v, want normal (100)", got.Seat.Category)
 			}
 			if got.Seat.Hall == nil || got.Seat.Hall.ID != hall.ID {
 				t.Errorf("GetWithDetails() Seat.Hall = %+v, want hall %d", got.Seat.Hall, hall.ID)
@@ -328,6 +340,9 @@ func TestGetTicketById(t *testing.T) {
 				got.UserId != user.ID || got.Status != models.Booked {
 				t.Errorf("GetById() = %+v", got)
 			}
+			if got.Number != 1 || got.Price != 100 {
+				t.Errorf("GetById() number/price = %d/%d, want 1/100", got.Number, got.Price)
+			}
 		})
 	}
 }
@@ -338,7 +353,7 @@ func TestGetAllTickets(t *testing.T) {
 		repo := models.NewTicketRepository(pool)
 		hall, seat, show, screening := seedTicketParents(t, pool)
 		user := seedUser(t, pool)
-		secondSeat := seedSeat(t, pool, hall.ID, 2, 100)
+		secondSeat := seedSeat(t, pool, hall.ID, 2, 1)
 
 		first, err := repo.Create(t.Context(), screening.ID, seat.ID, user.ID, models.Booked)
 		if err != nil {
@@ -388,7 +403,7 @@ func TestGetAllTicketsWithDetails(t *testing.T) {
 	repo := models.NewTicketRepository(pool)
 	hall, seat1, show, screening := seedTicketParents(t, pool)
 	user := seedUser(t, pool)
-	seat2 := seedSeat(t, pool, hall.ID, 2, 100)
+	seat2 := seedSeat(t, pool, hall.ID, 2, 1)
 
 	ticket1, err := repo.Create(t.Context(), screening.ID, seat1.ID, user.ID, models.Booked)
 	if err != nil {
@@ -417,6 +432,13 @@ func TestGetAllTicketsWithDetails(t *testing.T) {
 		if ticket.Seat == nil || ticket.Seat.ID != want.SeatId {
 			t.Errorf("GetAllWithDetails()[%d].Seat = %+v", i, ticket.Seat)
 		}
+		if ticket.Seat.Category == nil || ticket.Seat.Category.Name != "normal" {
+			t.Errorf("GetAllWithDetails()[%d].Seat.Category = %+v, want normal", i, ticket.Seat.Category)
+		}
+		if ticket.Number != want.Number || ticket.Price != 100 {
+			t.Errorf("GetAllWithDetails()[%d] number/price = %d/%d, want %d/100",
+				i, ticket.Number, ticket.Price, want.Number)
+		}
 		if ticket.Seat.Hall == nil || ticket.Seat.Hall.ID != hall.ID {
 			t.Errorf("GetAllWithDetails()[%d].Seat.Hall = %+v, want hall %d", i, ticket.Seat.Hall, hall.ID)
 		}
@@ -437,7 +459,7 @@ func TestGetTicketsByScreeningAndUser(t *testing.T) {
 	repo := models.NewTicketRepository(pool)
 	hall, seat1, show, screening1 := seedTicketParents(t, pool)
 	user := seedUser(t, pool)
-	seat2 := seedSeat(t, pool, hall.ID, 2, 100)
+	seat2 := seedSeat(t, pool, hall.ID, 2, 1)
 	screening2 := seedScreening(t, pool, hall.ID, show.ID, screeningBase.Add(2*time.Hour))
 
 	if _, err := repo.Create(t.Context(), screening1.ID, seat1.ID, user.ID, models.Booked); err != nil {
@@ -464,5 +486,63 @@ func TestGetTicketsByScreeningAndUser(t *testing.T) {
 	}
 	if len(byUser) != 3 {
 		t.Errorf("GetByUser() returned %d tickets, want 3", len(byUser))
+	}
+}
+
+// TestCreateTicket_PricingBySeatCategory verifies the core pricing rule:
+//
+//	ticket.price = show.price × seat_category.multiplier / 100
+//	ticket.number = seat.seat_number
+func TestCreateTicket_PricingBySeatCategory(t *testing.T) {
+	pool := testdb.Setup(t)
+	ticketRepo := models.NewTicketRepository(pool)
+	showRepo := models.NewShowRepository(pool)
+	seatRepo := models.NewSeatRepository(pool)
+
+	hall := seedHall(t, pool)
+	// Base price 80, so the arithmetic is not trivially the multiplier.
+	show, err := showRepo.Create(t.Context(), "Hamlet", 120, "Shakespeare", 80)
+	if err != nil {
+		t.Fatalf("seed show: %v", err)
+	}
+	screening := seedScreening(t, pool, hall.ID, show.ID, screeningBase)
+	user := seedUser(t, pool)
+
+	boxCategory := seedSeatCategory(t, pool, "box", 125)
+	if boxCategory.ID == 0 {
+		t.Fatal("box category was not created")
+	}
+
+	tests := []struct {
+		seatNumber uint32
+		categoryId int64
+		wantPrice  uint32
+	}{
+		{seatNumber: 1, categoryId: 1, wantPrice: 80},               // normal 100%
+		{seatNumber: 2, categoryId: 2, wantPrice: 120},              // premium 150%
+		{seatNumber: 3, categoryId: 3, wantPrice: 160},              // VIP 200%
+		{seatNumber: 4, categoryId: boxCategory.ID, wantPrice: 100}, // box 125%
+	}
+
+	for _, tt := range tests {
+		seat, err := seatRepo.Create(t.Context(), hall.ID, tt.seatNumber, tt.categoryId)
+		if err != nil {
+			t.Fatalf("seed seat %d: %v", tt.seatNumber, err)
+		}
+
+		ticket, err := ticketRepo.Create(t.Context(), screening.ID, seat.ID, user.ID, models.Booked)
+		if err != nil {
+			t.Fatalf("Create() for seat %d failed: %v", tt.seatNumber, err)
+		}
+
+		// The ticket number is the seat number inside the hall.
+		if ticket.Number != tt.seatNumber {
+			t.Errorf("ticket for seat %d has number %d, want %d",
+				tt.seatNumber, ticket.Number, tt.seatNumber)
+		}
+		if ticket.Price != tt.wantPrice {
+			t.Errorf("ticket for category %d costs %d, want %d",
+				tt.categoryId, ticket.Price, tt.wantPrice)
+		}
 	}
 }

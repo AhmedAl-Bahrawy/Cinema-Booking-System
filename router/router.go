@@ -10,6 +10,11 @@ func SetupRouter(h *handlers.Handler) *gin.Engine {
 
 	r.POST("/user", h.CreateUser)
 	r.POST("/hall", h.CreateHall)
+	r.POST("/show", h.CreateShow)
+	r.GET("/show/:id", h.GetShow)
+	r.POST("/seat-category", h.CreateSeatCategory)
+	r.GET("/seat-category/:id", h.GetSeatCategory)
+	r.GET("/seat-category", h.GetAllSeatCategories)
 	r.POST("/seat", h.CreateSeat)
 	r.GET("/seat/:id", h.GetSeat)
 	r.POST("/screening", h.CreateScreening)

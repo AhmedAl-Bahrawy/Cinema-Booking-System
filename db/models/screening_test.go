@@ -86,7 +86,7 @@ func TestCreateScreening_Overlap(t *testing.T) {
 		t.Fatalf("seed hall B: %v", err)
 	}
 	hamlet := seedShow(t, pool)
-	othello, err := models.NewShowRepository(pool).Create(t.Context(), "Othello", 90, "Shakespeare")
+	othello, err := models.NewShowRepository(pool).Create(t.Context(), "Othello", 90, "Shakespeare", 100)
 	if err != nil {
 		t.Fatalf("seed Othello: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestCreateScreening_SameHallDifferentShowsSameDay(t *testing.T) {
 	repo := models.NewScreeningRepository(pool)
 	hall := seedHall(t, pool)
 	hamlet := seedShow(t, pool)
-	othello, err := models.NewShowRepository(pool).Create(t.Context(), "Othello", 90, "Shakespeare")
+	othello, err := models.NewShowRepository(pool).Create(t.Context(), "Othello", 90, "Shakespeare", 100)
 	if err != nil {
 		t.Fatalf("seed Othello: %v", err)
 	}

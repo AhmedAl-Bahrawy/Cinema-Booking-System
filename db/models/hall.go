@@ -25,12 +25,14 @@ type HallReq struct {
 }
 
 type HallSeat struct {
-	hallID     int64
-	name       string
-	capacity   int64
-	seatID     *int64 // NULL when the hall has no seats
-	seatNumber *int64
-	price      *int64
+	hallID             int64
+	name               string
+	capacity           int64
+	seatID             *int64 // NULL when the hall has no seats
+	seatNumber         *int64
+	categoryID         *int64
+	categoryName       *string
+	categoryMultiplier *int64
 }
 
 type HallScreening struct {
@@ -126,9 +128,11 @@ func (r *HallRepository) getAllWithSeats(ctx context.Context) ([]*Hall, error) {
 	query := `
 	SELECT
 	    h.id, h.name, h.capacity,
-	    s.id, s.seat_number, s.price
+	    s.id, s.seat_number, s.category_id,
+	    c.name, c.price_multiplier_percent
 	FROM halls h
 	LEFT JOIN seats s ON s.hall_id = h.id
+	LEFT JOIN seat_categories c ON c.id = s.category_id
 	ORDER BY h.id, s.seat_number, s.id`
 
 	rows, err := r.db.Query(ctx, query)
@@ -140,7 +144,8 @@ func (r *HallRepository) getAllWithSeats(ctx context.Context) ([]*Hall, error) {
 		var r HallSeat
 		err := row.Scan(
 			&r.hallID, &r.name, &r.capacity,
-			&r.seatID, &r.seatNumber, &r.price,
+			&r.seatID, &r.seatNumber, &r.categoryID,
+			&r.categoryName, &r.categoryMultiplier,
 		)
 		return r, err
 	})
@@ -164,7 +169,12 @@ func (r *HallRepository) getAllWithSeats(ctx context.Context) ([]*Hall, error) {
 				ID:         *r.seatID,
 				HallId:     r.hallID,
 				SeatNumber: uint32(*r.seatNumber),
-				Price:      uint32(*r.price),
+				CategoryId: *r.categoryID,
+				Category: &SeatCategory{
+					ID:                     *r.categoryID,
+					Name:                   *r.categoryName,
+					PriceMultiplierPercent: uint32(*r.categoryMultiplier),
+				},
 			})
 		}
 	}

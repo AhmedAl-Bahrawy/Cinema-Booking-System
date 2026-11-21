@@ -19,14 +19,23 @@ main.go → db.ConnectDB → models.New*Repository(pool)
 |------|------------------|
 | `handlers.go` | The `Handler` struct (one repository per resource) and `NewHandler` |
 | `user.go` | `CreateUser` handler + `validateUser` helper |
+| `hall.go` | `CreateHall` handler |
+| `show.go` | `CreateShow` + `GetShow` handlers |
+| `seat.go` | `CreateSeat` + `GetSeat` handlers |
+| `seat_category.go` | `CreateSeatCategory` + `GetSeatCategory` + `GetAllSeatCategories` handlers |
+| `screening.go` | `CreateScreening` + `GetScreening` handlers |
+| `ticket.go` | `CreateTicket` + `GetTicket` handlers |
+| `errors.go` | Postgres error-code helpers + `parseIDParam` |
 
 ```go
 type Handler struct {
-    Halls   *models.HallRepository
-    Seats   *models.SeatRepository
-    Shows   *models.ShowRepository
-    Tickets *models.TicketRepository
-    Users   *models.UserRepository
+    Halls          *models.HallRepository
+    Seats          *models.SeatRepository
+    SeatCategories *models.SeatCategoryRepository
+    Shows          *models.ShowRepository
+    Screenings     *models.ScreeningRepository
+    Tickets        *models.TicketRepository
+    Users          *models.UserRepository
 }
 ```
 
@@ -40,9 +49,87 @@ their own database connections and are easy to wire/test.
 | Method | Path | Handler | Status |
 |--------|------|---------|--------|
 | `POST` | `/user` | `CreateUser` | ✅ Implemented |
+| `POST` | `/hall` | `CreateHall` | ✅ Implemented |
+| `POST` | `/show` | `CreateShow` | ✅ Implemented |
+| `GET` | `/show/:id` | `GetShow` | ✅ Implemented |
+| `POST` | `/seat-category` | `CreateSeatCategory` | ✅ Implemented |
+| `GET` | `/seat-category` | `GetAllSeatCategories` | ✅ Implemented |
+| `GET` | `/seat-category/:id` | `GetSeatCategory` | ✅ Implemented |
+| `POST` | `/seat` | `CreateSeat` | ✅ Implemented |
+| `GET` | `/seat/:id` | `GetSeat` | ✅ Implemented |
+| `POST` | `/screening` | `CreateScreening` | ✅ Implemented |
+| `GET` | `/screening/:id` | `GetScreening` | ✅ Implemented |
+| `POST` | `/ticket` | `CreateTicket` | ✅ Implemented |
+| `GET` | `/ticket/:id` | `GetTicket` | ✅ Implemented |
 
-Everything else returns `404` until the remaining routes are registered in
-[`../router/router.go`](../router/router.go).
+Creation order matters: a hall, a show and a seat category must exist before a
+seat or a screening can reference them, and a screening/seat/user must exist
+before a ticket can be sold.
+
+**Create a show** (`POST /show`) — `price` is the base price for a normal seat:
+
+```json
+{
+  "name": "Hamlet",
+  "duration_minutes": 120,
+  "author_name": "Shakespeare",
+  "price": 80
+}
+```
+
+**Create a seat category** (`POST /seat-category`) — the multiplier is a
+percentage of the show price (`100` = normal, `150` = +50%, ...):
+
+```json
+{
+  "name": "box",
+  "price_multiplier_percent": 125
+}
+```
+
+**Create a seat** (`POST /seat`) — `category_id` may be omitted to use the
+normal category (id `1`):
+
+```json
+{
+  "hall_id": 1,
+  "seat_number": 12,
+  "category_id": 2
+}
+```
+
+**Create a screening** (`POST /screening`) — the hall cannot have another
+screening that overlaps this time range; that returns `409 Conflict`:
+
+```json
+{
+  "hall_id": 1,
+  "show_id": 1,
+  "starts_at": "2026-11-21T10:00:00Z",
+  "ends_at": "2026-11-21T12:00:00Z"
+}
+```
+
+**Create a ticket** (`POST /ticket`) — the seat must belong to the hall of the
+screening, and the seat can only be sold once per screening:
+
+```json
+{
+  "screening_id": 1,
+  "seat_id": 1,
+  "user_id": 1,
+  "status": 2
+}
+```
+
+`status` may be omitted; it defaults to `2` (`Booked`). Use `1` for a hold and
+`3` for a cancellation.
+
+`number` and `price` are **server-computed**, so they are not accepted in the
+request body:
+
+- `number` = the seat number inside the hall.
+- `price` = `ROUND(show.price × seat_category.price_multiplier_percent / 100)`.
 
 ### `POST /user`
 
@@ -159,10 +246,10 @@ HTTP layer grows:
 
 - [x] Create handler for `User` (`CreateUser`)
 - [x] Wire `POST /user` into the router
-- [ ] Create handlers for `Hall`, `Show`, `Seat`, `Ticket`
-- [ ] Add `GetAll` / `GetById` / `Update` / `Delete` handlers
+- [x] Create handlers for `Hall`, `Show`, `Seat`, `Screening`, `Ticket`
+- [ ] Add `GetAll` / `Update` / `Delete` handlers
 - [ ] Return proper status codes (`404`, `409`, `500`) instead of `400`/`log.Println`
-- [ ] Implement the seat hold → book flow (`POST /seats/:id/hold`, `.../book`,
+- [ ] Implement the ticket hold → book flow (`POST /tickets/:id/hold`, `.../book`,
       `.../release`) with `409 Conflict` on races
 - [ ] Add handler tests
 - [ ] Implement that a user can book a ticket end-to-end

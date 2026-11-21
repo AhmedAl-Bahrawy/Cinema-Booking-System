@@ -24,7 +24,7 @@ func TestCreateShow(t *testing.T) {
 			showName:        "Hamlet",
 			durationMinutes: 120,
 			authorName:      "Shakespeare",
-			want:            &models.Show{ID: 1, Name: "Hamlet", DurationMinutes: 120, AuthorName: "Shakespeare"},
+			want:            &models.Show{ID: 1, Name: "Hamlet", DurationMinutes: 120, AuthorName: "Shakespeare", Price: 100},
 			wantErr:         false,
 		},
 		{
@@ -41,7 +41,7 @@ func TestCreateShow(t *testing.T) {
 			pool := testdb.Setup(t)
 			repo := models.NewShowRepository(pool)
 
-			got, gotErr := repo.Create(t.Context(), tt.showName, tt.durationMinutes, tt.authorName)
+			got, gotErr := repo.Create(t.Context(), tt.showName, tt.durationMinutes, tt.authorName, 100)
 			if gotErr != nil {
 				if !tt.wantErr {
 					t.Errorf("Create() failed: %v", gotErr)
@@ -52,7 +52,8 @@ func TestCreateShow(t *testing.T) {
 				t.Fatal("Create() succeeded unexpectedly")
 			}
 			if got.ID != tt.want.ID || got.Name != tt.want.Name ||
-				got.DurationMinutes != tt.want.DurationMinutes || got.AuthorName != tt.want.AuthorName {
+				got.DurationMinutes != tt.want.DurationMinutes || got.AuthorName != tt.want.AuthorName ||
+				got.Price != tt.want.Price {
 				t.Errorf("Create() = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -69,7 +70,7 @@ func TestGetShowById(t *testing.T) {
 		{
 			name:    "returns the show for an existing id",
 			id:      1,
-			want:    &models.Show{ID: 1, Name: "Hamlet", DurationMinutes: 120, AuthorName: "Shakespeare"},
+			want:    &models.Show{ID: 1, Name: "Hamlet", DurationMinutes: 120, AuthorName: "Shakespeare", Price: 100},
 			wantErr: false,
 		},
 		{
@@ -91,7 +92,7 @@ func TestGetShowById(t *testing.T) {
 			repo := models.NewShowRepository(pool)
 
 			// Seed a known show so the test is independent of other data.
-			if _, err := repo.Create(t.Context(), "Hamlet", 120, "Shakespeare"); err != nil {
+			if _, err := repo.Create(t.Context(), "Hamlet", 120, "Shakespeare", 100); err != nil {
 				t.Fatalf("seed show: %v", err)
 			}
 
@@ -110,7 +111,8 @@ func TestGetShowById(t *testing.T) {
 				t.Fatal("GetById() succeeded unexpectedly")
 			}
 			if got.ID != tt.want.ID || got.Name != tt.want.Name ||
-				got.DurationMinutes != tt.want.DurationMinutes || got.AuthorName != tt.want.AuthorName {
+				got.DurationMinutes != tt.want.DurationMinutes || got.AuthorName != tt.want.AuthorName ||
+				got.Price != tt.want.Price {
 				t.Errorf("GetById() = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -122,11 +124,11 @@ func TestGetAllShows(t *testing.T) {
 		pool := testdb.Setup(t)
 		repo := models.NewShowRepository(pool)
 
-		first, err := repo.Create(t.Context(), "Hamlet", 120, "Shakespeare")
+		first, err := repo.Create(t.Context(), "Hamlet", 120, "Shakespeare", 100)
 		if err != nil {
 			t.Fatalf("seed first show: %v", err)
 		}
-		second, err := repo.Create(t.Context(), "Othello", 90, "Shakespeare")
+		second, err := repo.Create(t.Context(), "Othello", 90, "Shakespeare", 100)
 		if err != nil {
 			t.Fatalf("seed second show: %v", err)
 		}
@@ -167,11 +169,11 @@ func TestGetAllShowsWithDetails(t *testing.T) {
 	pool := testdb.Setup(t)
 	showRepo := models.NewShowRepository(pool)
 
-	show1, err := showRepo.Create(t.Context(), "Hamlet", 120, "Shakespeare")
+	show1, err := showRepo.Create(t.Context(), "Hamlet", 120, "Shakespeare", 100)
 	if err != nil {
 		t.Fatalf("seed first show: %v", err)
 	}
-	show2, err := showRepo.Create(t.Context(), "Othello", 90, "Shakespeare")
+	show2, err := showRepo.Create(t.Context(), "Othello", 90, "Shakespeare", 100)
 	if err != nil {
 		t.Fatalf("seed second show: %v", err)
 	}

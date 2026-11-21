@@ -201,11 +201,11 @@ func TestGetAllHallsWithDetails(t *testing.T) {
 	}
 
 	// Hall A has two seats and one screening; Hall B has neither.
-	seat1, err := seatRepo.Create(t.Context(), hallA.ID, 1, 100)
+	seat1, err := seatRepo.Create(t.Context(), hallA.ID, 1, 1) // normal
 	if err != nil {
 		t.Fatalf("seed first seat: %v", err)
 	}
-	seat2, err := seatRepo.Create(t.Context(), hallA.ID, 2, 150)
+	seat2, err := seatRepo.Create(t.Context(), hallA.ID, 2, 2) // premium
 	if err != nil {
 		t.Fatalf("seed second seat: %v", err)
 	}
@@ -228,11 +228,19 @@ func TestGetAllHallsWithDetails(t *testing.T) {
 		t.Fatalf("GetAllWithDetails()[0].Seats has %d seats, want 2", len(got[0].Seats))
 	}
 	if got[0].Seats[0].ID != seat1.ID || got[0].Seats[0].SeatNumber != 1 ||
-		got[0].Seats[0].HallId != hallA.ID || got[0].Seats[0].Price != 100 {
+		got[0].Seats[0].HallId != hallA.ID || got[0].Seats[0].CategoryId != 1 {
 		t.Errorf("GetAllWithDetails()[0].Seats[0] = %+v", got[0].Seats[0])
 	}
-	if got[0].Seats[1].ID != seat2.ID || got[0].Seats[1].SeatNumber != 2 || got[0].Seats[1].Price != 150 {
+	if got[0].Seats[0].Category == nil || got[0].Seats[0].Category.Name != "normal" ||
+		got[0].Seats[0].Category.PriceMultiplierPercent != 100 {
+		t.Errorf("GetAllWithDetails()[0].Seats[0].Category = %+v, want normal", got[0].Seats[0].Category)
+	}
+	if got[0].Seats[1].ID != seat2.ID || got[0].Seats[1].SeatNumber != 2 || got[0].Seats[1].CategoryId != 2 {
 		t.Errorf("GetAllWithDetails()[0].Seats[1] = %+v", got[0].Seats[1])
+	}
+	if got[0].Seats[1].Category == nil || got[0].Seats[1].Category.Name != "premium" ||
+		got[0].Seats[1].Category.PriceMultiplierPercent != 150 {
+		t.Errorf("GetAllWithDetails()[0].Seats[1].Category = %+v, want premium", got[0].Seats[1].Category)
 	}
 	if len(got[0].Screenings) != 1 {
 		t.Fatalf("GetAllWithDetails()[0].Screenings has %d screenings, want 1", len(got[0].Screenings))

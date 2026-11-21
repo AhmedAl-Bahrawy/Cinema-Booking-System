@@ -20,13 +20,13 @@ func (h *Handler) CreateSeat(c *gin.Context) {
 		return
 	}
 
-	created, err := h.Seats.Create(ctx, newSeat.HallId, newSeat.SeatNumber, newSeat.Price)
+	created, err := h.Seats.Create(ctx, newSeat.HallId, newSeat.SeatNumber, newSeat.CategoryId)
 	if err != nil {
 		switch {
 		case isUniqueViolation(err):
 			c.JSON(http.StatusConflict, gin.H{"error": "this seat number already exists in the hall"})
 		case isForeignKeyViolation(err):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "hall does not exist"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "hall or seat category does not exist"})
 		default:
 			log.Printf("create seat failed: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})

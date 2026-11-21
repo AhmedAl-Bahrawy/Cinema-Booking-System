@@ -141,8 +141,8 @@ When adding a handler, keep it in the file for its resource (`hall.go`,
 The current `CreateUser` is a first version; these are the things to fix as the
 HTTP layer grows:
 
-- **`log.Fatal` exits the server.** Both `validateUser` failures and repository
-  failures call `log.Fatal`, which terminates the whole process instead of
+- **`log.Println` exits the server.** Both `validateUser` failures and repository
+  failures call `log.Println`, which terminates the whole process instead of
   returning an error response. Replace it with `c.JSON(...)` + `return`.
 - **`validateUser` writes the response itself.** It takes `*gin.Context`, emits
   the `400`, and also returns an `error`. A validation helper should be pure
@@ -161,7 +161,7 @@ HTTP layer grows:
 - [x] Wire `POST /user` into the router
 - [ ] Create handlers for `Hall`, `Show`, `Seat`, `Ticket`
 - [ ] Add `GetAll` / `GetById` / `Update` / `Delete` handlers
-- [ ] Return proper status codes (`404`, `409`, `500`) instead of `400`/`log.Fatal`
+- [ ] Return proper status codes (`404`, `409`, `500`) instead of `400`/`log.Println`
 - [ ] Implement the seat hold → book flow (`POST /seats/:id/hold`, `.../book`,
       `.../release`) with `409 Conflict` on races
 - [ ] Add handler tests

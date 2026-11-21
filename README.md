@@ -156,7 +156,7 @@ A successful request returns `201 Created`:
 
 Invalid JSON, a username/full name outside the allowed length, or a duplicate
 username currently returns `400 Bad Request` — but note that the handler also
-calls `log.Fatal` on validation/repository errors, which stops the server. See
+calls `log.Println` on validation/repository errors, which stops the server. See
 [`handlers/README.md`](handlers/README.md) for the full endpoint reference and
 known issues.
 
@@ -267,7 +267,7 @@ These are the design targets for the core feature — nothing is implemented yet
 - [x] Implement `POST /user` (`CreateUser`)
 - [ ] Implement the remaining user routes (`GET /users`, `GET /user/:id`, ...)
 - [ ] Implement hall/show/seat/ticket handlers and routes
-- [ ] Harden handler error handling (no `log.Fatal`; return `400`/`404`/`409`/`500`)
+- [ ] Harden handler error handling (no `log.Println`; return `400`/`404`/`409`/`500`)
 - [ ] Implement the hold → book lifecycle with transactions
 - [ ] Prevent double booking (atomic updates + unique constraints)
 - [ ] Handle concurrent users on the same seat (`409` + live status)

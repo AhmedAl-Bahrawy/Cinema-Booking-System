@@ -15,13 +15,13 @@ import (
 func loadEnv() (*string, error) {
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		log.Println("Error loading .env file")
 		return nil, err
 	}
 
 	databaseURL := os.Getenv("GOOSE_DBSTRING")
 	if databaseURL == "" {
-		log.Fatal("DB_URL is empty")
+		log.Println("DB_URL is empty")
 	}
 	return &databaseURL, nil
 }
@@ -38,12 +38,12 @@ func loadPool(databaseURL *string) (*pgxpool.Pool, error) {
 func main() {
 	databaseURL, err := loadEnv()
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	pool, err := loadPool(databaseURL)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	defer pool.Close()
 
@@ -59,7 +59,7 @@ func main() {
 
 	err = r.Run(":8080")
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 		return
 	}
 }

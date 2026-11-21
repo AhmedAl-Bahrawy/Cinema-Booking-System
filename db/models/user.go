@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,8 +14,9 @@ type User struct {
 	Username string `db:"username" json:"username" binding:"required,min=3,max=100"`
 	FullName string `db:"full_name" json:"full_name" binding:"required,min=3,max=255"`
 
-	// Joined relations: filled manually after a JOIN query, never scanned directly.
-	Seats []*Seat `db:"-" json:"seats,omitempty" binding:"-"`
+	// A user owns tickets, not physical seats. The same user can hold several
+	// tickets for different screenings (even on the same day).
+	Tickets []*Ticket `db:"-" json:"tickets,omitempty" binding:"-"`
 }
 
 type UserReq struct {
@@ -22,15 +24,29 @@ type UserReq struct {
 	FullName string `db:"full_name" json:"full_name" binding:"required,min=3,max=255"`
 }
 
-type UserSeat struct {
-	userID     int64
-	username   string
-	fullName   string
-	seatID     *int64 // NULL when the user has no seats
-	hallId     *int64
-	seatNumber *int64
-	status     *int16
-	price      *int64
+type UserTicket struct {
+	userID   int64
+	username string
+	fullName string
+
+	ticketID    *int64 // NULL when the user has no tickets
+	screeningID *int64
+	seatID      *int64
+	status      *int16
+	seatHallID  *int64
+	seatNumber  *int64
+	price       *int64
+
+	screeningHallID *int64
+	showID          *int64
+	startsAt        *time.Time
+	endsAt          *time.Time
+	hallID          *int64
+	hallName        *string
+	capacity        *int64
+	showName        *string
+	durationMinutes *int64
+	authorName      *string
 }
 
 type UserRepository struct {
@@ -85,27 +101,40 @@ func (r *UserRepository) GetAll(ctx context.Context) ([]*User, error) {
 	return users, nil
 }
 
-// GetAllWithDetails returns every user with their seats filled in.
-// Users without seats still appear, with an empty Seats list.
+// GetAllWithDetails returns every user with their tickets filled in. Each
+// ticket carries its Seat and its Screening (with Hall and Show).
+// Users without tickets still appear, with an empty Tickets list.
 func (r *UserRepository) GetAllWithDetails(ctx context.Context) ([]*User, error) {
 	query := `
 	SELECT
 	    u.id, u.username, u.full_name,
-	    s.id, s.hall_id, s.seat_number, s.status, s.price
+	    t.id, t.screening_id, t.seat_id, t.status,
+	    s.hall_id, s.seat_number, s.price,
+	    sc.hall_id, sc.show_id, sc.starts_at, sc.ends_at,
+	    h.id, h.name, h.capacity,
+	    sh.name, sh.duration_minutes, sh.author_name
 	FROM users u
-	LEFT JOIN seats s ON s.user_id = u.id
-	ORDER BY u.id, s.id`
+	LEFT JOIN tickets t ON t.user_id = u.id
+	LEFT JOIN seats s ON s.id = t.seat_id
+	LEFT JOIN screenings sc ON sc.id = t.screening_id
+	LEFT JOIN halls h ON h.id = sc.hall_id
+	LEFT JOIN shows sh ON sh.id = sc.show_id
+	ORDER BY u.id, t.id`
 
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query users with details: %w", err)
 	}
 
-	raw, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (UserSeat, error) {
-		var r UserSeat
+	raw, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (UserTicket, error) {
+		var r UserTicket
 		err := row.Scan(
 			&r.userID, &r.username, &r.fullName,
-			&r.seatID, &r.hallId, &r.seatNumber, &r.status, &r.price,
+			&r.ticketID, &r.screeningID, &r.seatID, &r.status,
+			&r.seatHallID, &r.seatNumber, &r.price,
+			&r.screeningHallID, &r.showID, &r.startsAt, &r.endsAt,
+			&r.hallID, &r.hallName, &r.capacity,
+			&r.showName, &r.durationMinutes, &r.authorName,
 		)
 		return r, err
 	})
@@ -113,7 +142,7 @@ func (r *UserRepository) GetAllWithDetails(ctx context.Context) ([]*User, error)
 		return nil, fmt.Errorf("collect users with details: %w", err)
 	}
 
-	// Group the flat rows: one user per id, with their seats attached.
+	// Group the flat rows: one user per id, with their tickets attached.
 	users := make([]*User, 0, len(raw))
 	byID := make(map[int64]*User)
 	for _, r := range raw {
@@ -123,16 +152,43 @@ func (r *UserRepository) GetAllWithDetails(ctx context.Context) ([]*User, error)
 			byID[r.userID] = user
 			users = append(users, user)
 		}
-		if r.seatID != nil {
-			user.Seats = append(user.Seats, &Seat{
-				ID:         *r.seatID,
-				UserId:     r.userID,
-				HallId:     *r.hallId,
-				SeatNumber: uint32(*r.seatNumber),
-				Status:     BookingStatus(*r.status),
-				Price:      uint32(*r.price),
-			})
+		if r.ticketID == nil {
+			continue
 		}
+
+		hall := &Hall{ID: *r.hallID, Name: *r.hallName, Capacity: uint32(*r.capacity)}
+		show := &Show{
+			ID:              *r.showID,
+			Name:            *r.showName,
+			DurationMinutes: *r.durationMinutes,
+			AuthorName:      *r.authorName,
+		}
+
+		// Ticket.User, Seat.Tickets, Screening.Tickets and Hall/Show
+		// child lists stay nil to avoid JSON cycles.
+		user.Tickets = append(user.Tickets, &Ticket{
+			ID:          *r.ticketID,
+			ScreeningId: *r.screeningID,
+			SeatId:      *r.seatID,
+			UserId:      r.userID,
+			Status:      TicketStatus(*r.status),
+			Seat: &Seat{
+				ID:         *r.seatID,
+				HallId:     *r.seatHallID,
+				SeatNumber: uint32(*r.seatNumber),
+				Price:      uint32(*r.price),
+				Hall:       hall,
+			},
+			Screening: &Screening{
+				ID:       *r.screeningID,
+				HallId:   *r.screeningHallID,
+				ShowId:   *r.showID,
+				StartsAt: *r.startsAt,
+				EndsAt:   *r.endsAt,
+				Hall:     hall,
+				Show:     show,
+			},
+		})
 	}
 
 	return users, nil

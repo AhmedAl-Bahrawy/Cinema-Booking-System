@@ -139,7 +139,7 @@ func Setup(t *testing.T) *pgxpool.Pool {
 
 	// Reset the tables (and their id sequences) before every test for isolation.
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(), `TRUNCATE users, halls, shows, seats, tickets RESTART IDENTITY CASCADE`); err != nil {
+		if _, err := pool.Exec(context.Background(), `TRUNCATE users, halls, shows, seats, screenings, tickets RESTART IDENTITY CASCADE`); err != nil {
 			t.Errorf("truncate tables: %v", err)
 		}
 	})

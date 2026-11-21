@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,7 +14,9 @@ type Hall struct {
 	Name     string `db:"name"     json:"name"     binding:"required,min=1,max=255"`
 	Capacity uint32 `db:"capacity" json:"capacity" binding:"required,min=1"`
 
-	Seats []*Seat `db:"-" json:"seats,omitempty" binding:"-"`
+	// Joined relations: filled manually after a JOIN query, never scanned directly.
+	Seats      []*Seat      `db:"-" json:"seats,omitempty"      binding:"-"`
+	Screenings []*Screening `db:"-" json:"screenings,omitempty" binding:"-"`
 }
 
 type HallReq struct {
@@ -26,10 +29,19 @@ type HallSeat struct {
 	name       string
 	capacity   int64
 	seatID     *int64 // NULL when the hall has no seats
-	seatUserId *int64
 	seatNumber *int64
-	status     *int16
 	price      *int64
+}
+
+type HallScreening struct {
+	hallID          int64
+	screeningID     *int64 // NULL when the hall has no screenings
+	showID          *int64
+	startsAt        *time.Time
+	endsAt          *time.Time
+	showName        *string
+	durationMinutes *int64
+	authorName      *string
 }
 
 type HallRepository struct {
@@ -90,30 +102,50 @@ func (r *HallRepository) GetAll(ctx context.Context) ([]*Hall, error) {
 	return halls, nil
 }
 
+// GetAllWithDetails returns every hall with its Seats and its Screenings.
+// Each screening carries its Show, so a hall can answer "which show is on?".
 func (r *HallRepository) GetAllWithDetails(ctx context.Context) ([]*Hall, error) {
+	halls, err := r.getAllWithSeats(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	byID := make(map[int64]*Hall, len(halls))
+	for _, hall := range halls {
+		byID[hall.ID] = hall
+	}
+
+	if err := r.attachScreenings(ctx, byID); err != nil {
+		return nil, err
+	}
+
+	return halls, nil
+}
+
+func (r *HallRepository) getAllWithSeats(ctx context.Context) ([]*Hall, error) {
 	query := `
 	SELECT
 	    h.id, h.name, h.capacity,
-	    s.id, s.user_id, s.seat_number, s.status, s.price
+	    s.id, s.seat_number, s.price
 	FROM halls h
 	LEFT JOIN seats s ON s.hall_id = h.id
-	ORDER BY h.id, s.id`
+	ORDER BY h.id, s.seat_number, s.id`
 
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("query halls with details: %w", err)
+		return nil, fmt.Errorf("query halls with seats: %w", err)
 	}
 
 	raw, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (HallSeat, error) {
 		var r HallSeat
 		err := row.Scan(
 			&r.hallID, &r.name, &r.capacity,
-			&r.seatID, &r.seatUserId, &r.seatNumber, &r.status, &r.price,
+			&r.seatID, &r.seatNumber, &r.price,
 		)
 		return r, err
 	})
 	if err != nil {
-		return nil, fmt.Errorf("collect halls with details: %w", err)
+		return nil, fmt.Errorf("collect halls with seats: %w", err)
 	}
 
 	// Group the flat rows: one hall per id, with its seats attached.
@@ -128,19 +160,68 @@ func (r *HallRepository) GetAllWithDetails(ctx context.Context) ([]*Hall, error)
 		}
 		// Seat.Hall is left nil on purpose to avoid a Hall -> Seats -> Hall cycle in JSON.
 		if r.seatID != nil {
-			seat := &Seat{
+			hall.Seats = append(hall.Seats, &Seat{
 				ID:         *r.seatID,
 				HallId:     r.hallID,
 				SeatNumber: uint32(*r.seatNumber),
-				Status:     BookingStatus(*r.status),
 				Price:      uint32(*r.price),
-			}
-			if r.seatUserId != nil {
-				seat.UserId = *r.seatUserId
-			}
-			hall.Seats = append(hall.Seats, seat)
+			})
 		}
 	}
 
 	return halls, nil
+}
+
+func (r *HallRepository) attachScreenings(ctx context.Context, byID map[int64]*Hall) error {
+	query := `
+	SELECT
+	    h.id,
+	    sc.id, sc.show_id, sc.starts_at, sc.ends_at,
+	    sh.name, sh.duration_minutes, sh.author_name
+	FROM halls h
+	LEFT JOIN screenings sc ON sc.hall_id = h.id
+	LEFT JOIN shows sh ON sh.id = sc.show_id
+	ORDER BY h.id, sc.starts_at, sc.id`
+
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return fmt.Errorf("query halls with screenings: %w", err)
+	}
+
+	raw, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (HallScreening, error) {
+		var r HallScreening
+		err := row.Scan(
+			&r.hallID,
+			&r.screeningID, &r.showID, &r.startsAt, &r.endsAt,
+			&r.showName, &r.durationMinutes, &r.authorName,
+		)
+		return r, err
+	})
+	if err != nil {
+		return fmt.Errorf("collect halls with screenings: %w", err)
+	}
+
+	for _, r := range raw {
+		hall, ok := byID[r.hallID]
+		if !ok || r.screeningID == nil {
+			continue
+		}
+
+		// Screening.Hall and Show.Screenings are left nil to avoid JSON cycles.
+		hall.Screenings = append(hall.Screenings, &Screening{
+			ID:       *r.screeningID,
+			HallId:   r.hallID,
+			ShowId:   *r.showID,
+			StartsAt: *r.startsAt,
+			EndsAt:   *r.endsAt,
+			Show: &Show{
+				ID:              *r.showID,
+				Name:            *r.showName,
+				DurationMinutes: *r.durationMinutes,
+				AuthorName:      *r.authorName,
+			},
+		})
+	}
+
+	return nil
 }

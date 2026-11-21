@@ -3,6 +3,7 @@ package models_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/AhmedAl-Bahrawy/Cinema-Booking-System/db/models"
 	"github.com/AhmedAl-Bahrawy/Cinema-Booking-System/internal/testdb"
@@ -228,7 +229,7 @@ func TestGetAllUsers(t *testing.T) {
 func TestGetAllUsersWithDetails(t *testing.T) {
 	pool := testdb.Setup(t)
 	userRepo := models.NewUserRepository(pool)
-	seatRepo := models.NewSeatRepository(pool)
+	ticketRepo := models.NewTicketRepository(pool)
 
 	first, err := userRepo.Create(t.Context(), "ahmed", "Ahmed Al-Bahrawy")
 	if err != nil {
@@ -239,15 +240,22 @@ func TestGetAllUsersWithDetails(t *testing.T) {
 		t.Fatalf("seed second user: %v", err)
 	}
 	hall := seedHall(t, pool)
+	show := seedShow(t, pool)
 
-	// The first user holds two seats; the second user has none.
-	seat1, err := seatRepo.Create(t.Context(), first.ID, hall.ID, 1, models.Free, 100)
+	seat1 := seedSeat(t, pool, hall.ID, 1, 100)
+
+	// The first user books the same physical seat for two shows on the same
+	// day; the second user has no tickets.
+	screening1 := seedScreening(t, pool, hall.ID, show.ID, screeningBase)
+	screening2 := seedScreening(t, pool, hall.ID, show.ID, screeningBase.Add(2*time.Hour))
+
+	ticket1, err := ticketRepo.Create(t.Context(), screening1.ID, seat1.ID, first.ID, models.Booked)
 	if err != nil {
-		t.Fatalf("seed first seat: %v", err)
+		t.Fatalf("seed first ticket: %v", err)
 	}
-	seat2, err := seatRepo.Create(t.Context(), first.ID, hall.ID, 2, models.Booked, 150)
+	ticket2, err := ticketRepo.Create(t.Context(), screening2.ID, seat1.ID, first.ID, models.Booked)
 	if err != nil {
-		t.Fatalf("seed second seat: %v", err)
+		t.Fatalf("seed second ticket: %v", err)
 	}
 
 	got, err := userRepo.GetAllWithDetails(t.Context())
@@ -258,27 +266,36 @@ func TestGetAllUsersWithDetails(t *testing.T) {
 		t.Fatalf("GetAllWithDetails() returned %d users, want 2", len(got))
 	}
 
-	// First user: two seats attached.
+	// First user: two tickets attached.
 	if got[0].ID != first.ID {
 		t.Fatalf("GetAllWithDetails()[0].ID = %d, want %d", got[0].ID, first.ID)
 	}
-	if len(got[0].Seats) != 2 {
-		t.Fatalf("GetAllWithDetails()[0].Seats has %d seats, want 2", len(got[0].Seats))
+	if len(got[0].Tickets) != 2 {
+		t.Fatalf("GetAllWithDetails()[0].Tickets has %d tickets, want 2", len(got[0].Tickets))
 	}
-	if got[0].Seats[0].ID != seat1.ID || got[0].Seats[0].SeatNumber != 1 ||
-		got[0].Seats[0].HallId != hall.ID || got[0].Seats[0].UserId != first.ID ||
-		got[0].Seats[0].Status != models.Free || got[0].Seats[0].Price != 100 {
-		t.Errorf("GetAllWithDetails()[0].Seats[0] = %+v", got[0].Seats[0])
+	if got[0].Tickets[0].ID != ticket1.ID || got[0].Tickets[1].ID != ticket2.ID {
+		t.Errorf("GetAllWithDetails()[0].Tickets = %+v", got[0].Tickets)
 	}
-	if got[0].Seats[1].ID != seat2.ID || got[0].Seats[1].Status != models.Booked || got[0].Seats[1].Price != 150 {
-		t.Errorf("GetAllWithDetails()[0].Seats[1] = %+v", got[0].Seats[1])
+	for i, ticket := range got[0].Tickets {
+		if ticket.Seat == nil || ticket.Seat.ID != seat1.ID || ticket.Seat.SeatNumber != 1 {
+			t.Errorf("GetAllWithDetails()[0].Tickets[%d].Seat = %+v", i, ticket.Seat)
+		}
+		if ticket.Seat.Hall == nil || ticket.Seat.Hall.ID != hall.ID {
+			t.Errorf("GetAllWithDetails()[0].Tickets[%d].Seat.Hall = %+v", i, ticket.Seat.Hall)
+		}
+		if ticket.Screening == nil || ticket.Screening.Show == nil || ticket.Screening.Show.ID != show.ID {
+			t.Errorf("GetAllWithDetails()[0].Tickets[%d].Screening = %+v", i, ticket.Screening)
+		}
+		if ticket.User != nil {
+			t.Errorf("GetAllWithDetails()[0].Tickets[%d].User should be nil to avoid a cycle", i)
+		}
 	}
 
-	// Second user: no seats.
+	// Second user: no tickets.
 	if got[1].ID != second.ID {
 		t.Fatalf("GetAllWithDetails()[1].ID = %d, want %d", got[1].ID, second.ID)
 	}
-	if len(got[1].Seats) != 0 {
-		t.Errorf("GetAllWithDetails()[1].Seats has %d seats, want 0", len(got[1].Seats))
+	if len(got[1].Tickets) != 0 {
+		t.Errorf("GetAllWithDetails()[1].Tickets has %d tickets, want 0", len(got[1].Tickets))
 	}
 }

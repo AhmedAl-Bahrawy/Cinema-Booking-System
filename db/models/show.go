@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,17 +15,21 @@ type Show struct {
 	DurationMinutes int64  `db:"duration_minutes" json:"duration_minutes" binding:"required,min=1"` // per-minutes
 	AuthorName      string `db:"author_name"      json:"author_name"      binding:"required,min=1,max=255"`
 
-	Tickets []*Ticket `db:"-" json:"tickets,omitempty" binding:"-"`
+	// A show reaches a hall through screenings: show → screenings → hall.
+	Screenings []*Screening `db:"-" json:"screenings,omitempty" binding:"-"`
 }
 
-type ShowTicket struct {
+type ShowScreening struct {
 	showID          int64
 	name            string
 	durationMinutes int64
 	authorName      string
-	ticketID        *int64 // NULL when the show has no tickets
-	seatID          *int64
+	screeningID     *int64 // NULL when the show has no screenings
 	hallID          *int64
+	startsAt        *time.Time
+	endsAt          *time.Time
+	hallName        *string
+	capacity        *int64
 }
 
 type ShowRepository struct {
@@ -79,27 +84,31 @@ func (r *ShowRepository) GetAll(ctx context.Context) ([]*Show, error) {
 	return shows, nil
 }
 
-// GetAllWithDetails returns every show with its tickets filled in.
-// Shows without tickets still appear, with an empty Tickets list.
+// GetAllWithDetails returns every show with its scheduled Screenings filled
+// in. Each screening carries the Hall it plays in.
+// Shows without screenings still appear, with an empty Screenings list.
 func (r *ShowRepository) GetAllWithDetails(ctx context.Context) ([]*Show, error) {
 	query := `
 	SELECT
 	    sh.id, sh.name, sh.duration_minutes, sh.author_name,
-	    t.id, t.seat_id, t.hall_id
+	    sc.id, sc.hall_id, sc.starts_at, sc.ends_at,
+	    h.name, h.capacity
 	FROM shows sh
-	LEFT JOIN tickets t ON t.show_id = sh.id
-	ORDER BY sh.id, t.id`
+	LEFT JOIN screenings sc ON sc.show_id = sh.id
+	LEFT JOIN halls h ON h.id = sc.hall_id
+	ORDER BY sh.id, sc.starts_at, sc.id`
 
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query shows with details: %w", err)
 	}
 
-	raw, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (ShowTicket, error) {
-		var r ShowTicket
+	raw, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (ShowScreening, error) {
+		var r ShowScreening
 		err := row.Scan(
 			&r.showID, &r.name, &r.durationMinutes, &r.authorName,
-			&r.ticketID, &r.seatID, &r.hallID,
+			&r.screeningID, &r.hallID, &r.startsAt, &r.endsAt,
+			&r.hallName, &r.capacity,
 		)
 		return r, err
 	})
@@ -107,7 +116,7 @@ func (r *ShowRepository) GetAllWithDetails(ctx context.Context) ([]*Show, error)
 		return nil, fmt.Errorf("collect shows with details: %w", err)
 	}
 
-	// Group the flat rows: one show per id, with its tickets attached.
+	// Group the flat rows: one show per id, with its screenings attached.
 	shows := make([]*Show, 0, len(raw))
 	byID := make(map[int64]*Show)
 	for _, r := range raw {
@@ -117,13 +126,16 @@ func (r *ShowRepository) GetAllWithDetails(ctx context.Context) ([]*Show, error)
 			byID[r.showID] = show
 			shows = append(shows, show)
 		}
-		// Ticket.Show is left nil on purpose to avoid a Show -> Tickets -> Show cycle in JSON.
-		if r.ticketID != nil {
-			show.Tickets = append(show.Tickets, &Ticket{
-				ID:     *r.ticketID,
-				SeatId: *r.seatID,
-				HallId: *r.hallID,
-				ShowId: r.showID,
+		// Screening.Show and Hall.Screenings are left nil on purpose to avoid
+		// a Show -> Screenings -> Show cycle in JSON.
+		if r.screeningID != nil {
+			show.Screenings = append(show.Screenings, &Screening{
+				ID:       *r.screeningID,
+				HallId:   *r.hallID,
+				ShowId:   r.showID,
+				StartsAt: *r.startsAt,
+				EndsAt:   *r.endsAt,
+				Hall:     &Hall{ID: *r.hallID, Name: *r.hallName, Capacity: uint32(*r.capacity)},
 			})
 		}
 	}

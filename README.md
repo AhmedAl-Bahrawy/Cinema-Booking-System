@@ -28,17 +28,19 @@
 
 | Layer | Status | Notes |
 |-------|--------|-------|
-| Database migrations | ✅ Done | `users`, `halls`, `shows`, `seats`, `tickets` |
+| Database migrations | ✅ Done | `users`, `halls`, `shows`, `seats`, `screenings`, `tickets` |
 | Models + repositories | ✅ Done | Explicit SQL with `pgx` v5 (no ORM) |
 | Repository tests | ✅ Done | Integration tests against a real PostgreSQL DB |
-| Handlers | 🚧 In progress | `CreateUser` is implemented; hall/show/seat/ticket handlers are pending |
-| Router | 🚧 In progress | `POST /user` is registered; the other routes are pending |
+| Handlers | 🚧 In progress | `CreateUser`, `CreateHall`, `CreateSeat`, `CreateScreening`, `CreateTicket` are implemented |
+| Router | 🚧 In progress | User, hall, seat, screening and ticket routes are registered |
 | Booking logic (hold/book) | ⬜ Not started | The main goal of the project |
 | UI | ⬜ Not started | Only if there is time |
 
 The project currently **starts**, connects to PostgreSQL, builds all repositories,
-wires them into the handlers and router, and exposes one endpoint: `POST /user`.
-The next step is the remaining handlers and the booking/seat-hold logic.
+wires them into the handlers and router, and exposes create endpoints for users,
+halls, seats, screenings and tickets. The relations are fully normalised: a
+physical seat is reusable, a hall can schedule different shows during the day,
+and a ticket is the only place where a user, a seat and a screening meet.
 
 ---
 
@@ -66,6 +68,7 @@ Cinema-Booking-System/
 │       ├── user.go
 │       ├── hall.go
 │       ├── show.go
+│       ├── screening.go        # A show playing in a hall during a time slot
 │       ├── seat.go
 │       ├── ticket.go
 │       ├── *_test.go           # Integration tests for every repository
@@ -73,9 +76,13 @@ Cinema-Booking-System/
 ├── handlers/                   # Gin handlers (HTTP layer)
 │   ├── handlers.go             # Handler struct holding all repositories
 │   ├── user.go                 # CreateUser handler + request validation
+│   ├── hall.go                 # CreateHall
+│   ├── seat.go                 # CreateSeat / GetSeat
+│   ├── screening.go            # CreateScreening / GetScreening
+│   ├── ticket.go               # CreateTicket / GetTicket
 │   └── README.md               # Endpoint reference and handler conventions
 ├── router/
-│   └── router.go               # Registers routes on the Gin engine (`POST /user`)
+│   └── router.go               # Registers routes on the Gin engine
 ├── internal/
 │   └── testdb/testdb.go        # Creates a throwaway DB, applies migrations, cleans up
 ├── go.mod / go.sum
@@ -137,8 +144,9 @@ goose down-to 0
 go run .
 ```
 
-The server listens on **`http://localhost:8080`**. Only `POST /user` is registered
-so far, so every other path returns `404` until the router is filled in.
+The server listens on **`http://localhost:8080`**. The create/read routes for
+users, halls, seats, screenings and tickets are registered (see
+[`handlers/README.md`](handlers/README.md)).
 
 ### 4. Try the current endpoint
 
@@ -185,30 +193,48 @@ users (id, username UNIQUE, full_name)
 halls (id, name UNIQUE, capacity >= 0)
 shows (id, name, duration_minutes > 0, author_name)
 
-seats (id, user_id → users.id NULLABLE, hall_id → halls.id,
-       seat_number > 0, status 0|1|2, price >= 0)
+seats (id, hall_id → halls.id, seat_number > 0, price >= 0)
        UNIQUE (hall_id, seat_number)
+       -- physical seats only: no user, no booking status
 
-tickets (id, seat_id → seats.id, hall_id → halls.id, show_id → shows.id)
-       UNIQUE (show_id, seat_id)   -- a seat is sold only once per show
+screenings (id, hall_id → halls.id, show_id → shows.id,
+            starts_at, ends_at)
+            CHECK (ends_at > starts_at)
+            EXCLUDE (hall_id =, [starts_at, ends_at) &&)
+            -- one hall can never play two shows at the same time
+
+tickets (id, screening_id → screenings.id, seat_id → seats.id,
+         user_id → users.id, status 1|2|3)
+         UNIQUE (screening_id, seat_id)  -- a seat is sold once per screening
 ```
 
-### Seat status values
+### Relations
+
+```
+user ──< tickets >── seat ──> hall ──< screenings >── show
+                     │                    │
+                     └────────────────────┘
+                        (same hall)
+```
+
+- A **seat** is physical and reusable. It belongs to exactly one hall and has
+  no user or status.
+- A **screening** is "this show plays in this hall at this time". A hall can
+  show different films during the same day, but never two at the same time.
+- A **ticket** is the booking: it names the seat, the user, and the screening.
+  The same seat can therefore be sold to the same user (or another user) for a
+  later screening on the same day.
+
+### Ticket status values
 
 | Value | Name | Meaning |
 |-------|------|---------|
-| `0` | `Free` | Available |
-| `1` | `Holding` | Temporarily reserved by a user (the "hold seat" color) |
+| `1` | `Held` | Temporarily reserved by a user (the "hold seat" color) |
 | `2` | `Booked` | Paid/sold |
+| `3` | `Cancelled` | Released again |
 
-Relations: `User` → `Seats`, `Hall` → `Seats`, `Show` → `Tickets`,
-`Seat` → `User` + `Hall`, `Ticket` → `Seat` + `Hall` + `Show`.
-
-> ⚠️ **Schema note:** `seats.status` is stored per *physical seat*, not per
-> *seat + show*. That is fine while the project has a single show per hall, but a
-> seat held/booked for one show would look taken for another show. If multiple
-> shows per hall are needed, move the status to a `show_seats` (show_id, seat_id,
-> status) table and keep `tickets` as the proof of purchase.
+Relations: `User` → `Tickets`, `Hall` → `Seats` + `Screenings`,
+`Show` → `Screenings`, `Seat` → `Hall`, `Ticket` → `Seat` + `User` + `Screening`.
 
 ---
 
@@ -216,30 +242,34 @@ Relations: `User` → `Seats`, `Hall` → `Seats`, `Show` → `Tickets`,
 
 These are the design targets for the core feature — nothing is implemented yet.
 
-1. **No double booking.** Two users must never end up with `Booked` on the same
-   seat for the same show. Enforced in **two places**:
-   - The atomic `UPDATE seats SET user_id = $1, status = 2
-     WHERE id = $2 AND status = 0` — the `WHERE status = 0` guard means only one
-     writer can win.
-   - The `UNIQUE (show_id, seat_id)` index on `tickets` as a last line of defense.
-2. **Hold → Book lifecycle.** Booking is two phases:
-   - *Hold*: atomically transition `Free (0) → Holding (1)` and record the user.
-     The seat shows up as held (e.g. yellow) for everyone else.
-   - *Book*: transition `Holding (1) → Booked (2)` and insert the ticket.
-   - *Release*: if the hold times out or the user cancels, back to `Free (0)`.
+1. **No double booking.** Two users must never end up with a ticket for the same
+   seat and screening. Enforced by:
+   - `UNIQUE (screening_id, seat_id)` on `tickets`.
+   - `INSERT ... SELECT` that only succeeds when the seat belongs to the hall of
+     the screening.
+   - A trigger (`tickets_seat_hall_check`) as a last line of defence.
+2. **Hold → Book lifecycle.** Booking is two phases on the *ticket*, not on the
+   physical seat:
+   - *Hold*: insert a ticket with `status = 1` (`Held`) and `expires_at` (to be
+     added). It shows up as held for everyone else.
+   - *Book*: `UPDATE tickets SET status = 2 WHERE id = $1 AND status = 1`.
+   - *Release*: `UPDATE tickets SET status = 3 WHERE id = $1 AND status = 1`, or
+     delete the held ticket after it expires.
 3. **Row locking when needed.** For flows that read then write (e.g. choosing
-   several seats at once, or checking a hold before confirming), use a
-   transaction with `SELECT ... FOR UPDATE` so concurrent requests serialize
-   instead of racing.
-4. **Check the result, not just the error.** An `UPDATE ... WHERE status = 0`
+   several seats at once), use a transaction with `SELECT ... FOR UPDATE` on the
+   screening/ticket rows so concurrent requests serialize instead of racing.
+4. **Check the result, not just the error.** An `UPDATE ... WHERE status = 1`
    that matches zero rows is a conflict, not a database error — the handler must
-   return `409 Conflict` in that case.
-5. **Hold expiry.** Add an `expires_at` column (or a background sweeper) so
-   abandoned holds do not stay colored forever.
-6. **Live updates between users.** When a seat changes state, broadcast the new
+   return `409 Conflict`.
+5. **Hold expiry.** Add an `expires_at` column on `tickets` (or a background
+   sweeper) so abandoned holds do not stay coloured forever.
+6. **Hall scheduling.** The `screenings` exclusion constraint already prevents
+   two overlapping shows in one hall. A `POST /screening` that overlaps returns
+   `409 Conflict`.
+7. **Live updates between users.** When a ticket changes state, broadcast the new
    state (SSE / WebSocket) to the other ticket windows so every user sees the
-   hold/book color immediately.
-7. **Two parallel windows.** Model each booking window as an independent
+   hold/book colour immediately.
+8. **Two parallel windows.** Model each booking window as an independent
    request path (goroutine/channel or simply concurrent HTTP requests). The
    database is the single source of truth, so the windows never need to share
    in-memory state.
@@ -247,12 +277,12 @@ These are the design targets for the core feature — nothing is implemented yet
 ### Suggested handler checklist
 
 ```
-[ ] POST   /seats/:id/hold     -> Free → Holding (409 on conflict)
-[ ] POST   /seats/:id/release  -> Holding → Free (owner only)
-[ ] POST   /seats/:id/book     -> Holding → Booked + create ticket
-[ ] GET    /halls/:id/seats    -> seats with status + holder for the UI
-[ ] GET    /shows/:id/tickets  -> sold seats for a show
-[ ] SSE /  /events             -> live seat status updates
+[ ] POST   /tickets/:id/hold     -> create Held ticket (409 on conflict)
+[ ] POST   /tickets/:id/release  -> Held → Cancelled (owner only)
+[ ] POST   /tickets/:id/book     -> Held → Booked
+[ ] GET    /screenings/:id/seats -> seats with ticket status + holder for the UI
+[ ] GET    /shows/:id/screenings -> schedule for a show
+[ ] SSE /  /events               -> live seat status updates
 ```
 
 ---
@@ -265,6 +295,8 @@ These are the design targets for the core feature — nothing is implemented yet
 - [x] Cover repositories with integration tests
 - [x] Wire repositories into handlers and router
 - [x] Implement `POST /user` (`CreateUser`)
+- [x] Model true relations (`seats` ↔ `screenings` ↔ `tickets`)
+- [x] Implement `CreateSeat`, `CreateScreening`, `CreateTicket`
 - [ ] Implement the remaining user routes (`GET /users`, `GET /user/:id`, ...)
 - [ ] Implement hall/show/seat/ticket handlers and routes
 - [ ] Harden handler error handling (no `log.Println`; return `400`/`404`/`409`/`500`)

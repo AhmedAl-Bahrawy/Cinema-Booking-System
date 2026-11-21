@@ -26,8 +26,9 @@ If you come back to this code later, this file explains:
 | `user.go` | `User` | `users` | Users of the cinema |
 | `hall.go` | `Hall` | `halls` | Cinema halls (rooms) |
 | `show.go` | `Show` | `shows` | Plays/movies that are shown |
-| `seat.go` | `Seat` | `seats` | Seats inside a hall; optionally held/booked by a user |
-| `ticket.go` | `Ticket` | `tickets` | Sold seat for a specific show |
+| `screening.go` | `Screening` | `screenings` | A show playing in a hall during a time slot |
+| `seat.go` | `Seat` | `seats` | Physical seats inside a hall (no user, no status) |
+| `ticket.go` | `Ticket` | `tickets` | A user's seat for one screening (the booking) |
 | `*_test.go` | — | — | Integration tests against a throwaway PostgreSQL database |
 
 Migrations live in [`../migrations`](../migrations) and are the source of truth for
@@ -42,30 +43,45 @@ database. See [Request structs](#request-structs) below.
 ## Database schema & relations
 
 ```
-users                      halls
-  id (PK)                    id (PK)
-  username (UNIQUE)          name (UNIQUE)
-  full_name                  capacity >= 0
-    │                          │
-    │                          │ 1
-    │                          ▼
-    │                       seats
-    │                        id (PK)
-    └──────────────►         user_id  → users.id  (NULLABLE, ON DELETE SET NULL)
-       0..n                  hall_id  → halls.id  (NOT NULL, ON DELETE CASCADE)
-                             seat_number > 0
-                             status 0|1|2
-                             price >= 0
-                             UNIQUE (hall_id, seat_number)
-                               │
-                               │ 1
-                               ▼
-shows                       tickets
-  id (PK)                    id (PK)
-  name                       seat_id → seats.id  (NOT NULL)
-  duration_minutes > 0       hall_id → halls.id  (NOT NULL)
-  author_name                show_id → shows.id  (NOT NULL)
-                             UNIQUE (show_id, seat_id)
+users                          halls
+  id (PK)                        id (PK)
+  username (UNIQUE)              name (UNIQUE)
+  full_name                      capacity >= 0
+    │                              │
+    │                              │ 1
+    │                              ▼
+    │                           seats
+    │                            id (PK)
+    │                            hall_id → halls.id (NOT NULL, ON DELETE CASCADE)
+    │                            seat_number > 0
+    │                            price >= 0
+    │                            UNIQUE (hall_id, seat_number)
+    │
+    │                          screenings
+    │                            id (PK)
+    │                            hall_id → halls.id (NOT NULL, ON DELETE CASCADE)
+    │                            show_id → shows.id (NOT NULL, ON DELETE CASCADE)
+    │                            starts_at, ends_at (TIMESTAMPTZ)
+    │                            CHECK (ends_at > starts_at)
+    │                            EXCLUDE (hall_id =, [starts_at, ends_at) &&)
+    │                              │
+    │                              │ 1
+    │                              ▼
+    └──────────────────────►   tickets
+                               id (PK)
+                               screening_id → screenings.id (NOT NULL)
+                               seat_id      → seats.id      (NOT NULL)
+                               user_id      → users.id      (NOT NULL)
+                               status 1|2|3
+                               UNIQUE (screening_id, seat_id)
+
+shows
+  id (PK)
+  name
+  duration_minutes > 0
+  author_name
+    │
+    └──< screenings >── halls
 ```
 
 Key rules enforced by the database (and verified by tests):
@@ -73,24 +89,32 @@ Key rules enforced by the database (and verified by tests):
 - `users.username` is unique.
 - `halls.name` is unique.
 - A seat number is unique **per hall** (`UNIQUE (hall_id, seat_number)`).
-- A seat can be sold **once per show** (`UNIQUE (show_id, seat_id)`).
-- `seats.user_id` is **nullable** — a seat is free until someone holds/books it.
-- Deleting a hall deletes its seats and tickets (`ON DELETE CASCADE`).
-- Deleting a user keeps the seat but sets `user_id = NULL`.
+- A seat is **physical**: it has no `user_id` and no `status`.
+- A **screening** is a show in a hall at a time. The exclusion constraint
+  (`EXCLUDE USING gist (hall_id WITH =, tstzrange(starts_at, ends_at) WITH &&)`)
+  guarantees a hall never plays two shows at the same time. It can play a
+  different show later on the same day.
+- A ticket is unique **per screening and seat** (`UNIQUE (screening_id, seat_id)`):
+  a seat is sold once per screening, but is free again for the next screening.
+- A ticket's seat must belong to the hall of the screening. The repository's
+  `INSERT ... SELECT` checks it, and the `tickets_seat_hall_check` trigger
+  enforces it in the database.
+- Deleting a hall deletes its seats and screenings (`ON DELETE CASCADE`).
+- Deleting a user deletes that user's tickets (`ON DELETE CASCADE`).
 
-### Booking status (`seat.go`)
+### Ticket status (`ticket.go`)
 
 ```go
-type BookingStatus int8
+type TicketStatus int16
 
 const (
-    Free    BookingStatus = iota // 0
-    Holding                      // 1
-    Booked                       // 2
+    Held      TicketStatus = 1 // temporarily reserved
+    Booked    TicketStatus = 2 // paid / confirmed
+    Cancelled TicketStatus = 3 // released again
 )
 ```
 
-Stored as `SMALLINT` with `CHECK (status IN (0, 1, 2))`.
+Stored as `SMALLINT` with `CHECK (status IN (1, 2, 3))`.
 
 ---
 

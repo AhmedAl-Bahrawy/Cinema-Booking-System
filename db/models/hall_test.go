@@ -200,15 +200,17 @@ func TestGetAllHallsWithDetails(t *testing.T) {
 		t.Fatalf("seed second hall: %v", err)
 	}
 
-	// Hall A has two seats; Hall B has none.
-	seat1, err := seatRepo.Create(t.Context(), 0, hallA.ID, 1, models.Free, 100)
+	// Hall A has two seats and one screening; Hall B has neither.
+	seat1, err := seatRepo.Create(t.Context(), hallA.ID, 1, 100)
 	if err != nil {
 		t.Fatalf("seed first seat: %v", err)
 	}
-	seat2, err := seatRepo.Create(t.Context(), 0, hallA.ID, 2, models.Holding, 150)
+	seat2, err := seatRepo.Create(t.Context(), hallA.ID, 2, 150)
 	if err != nil {
 		t.Fatalf("seed second seat: %v", err)
 	}
+	show := seedShow(t, pool)
+	screening := seedScreening(t, pool, hallA.ID, show.ID, screeningBase)
 
 	got, err := hallRepo.GetAllWithDetails(t.Context())
 	if err != nil {
@@ -218,7 +220,7 @@ func TestGetAllHallsWithDetails(t *testing.T) {
 		t.Fatalf("GetAllWithDetails() returned %d halls, want 2", len(got))
 	}
 
-	// Hall A: two seats attached.
+	// Hall A: two seats and one screening attached.
 	if got[0].ID != hallA.ID {
 		t.Fatalf("GetAllWithDetails()[0].ID = %d, want %d", got[0].ID, hallA.ID)
 	}
@@ -226,19 +228,30 @@ func TestGetAllHallsWithDetails(t *testing.T) {
 		t.Fatalf("GetAllWithDetails()[0].Seats has %d seats, want 2", len(got[0].Seats))
 	}
 	if got[0].Seats[0].ID != seat1.ID || got[0].Seats[0].SeatNumber != 1 ||
-		got[0].Seats[0].HallId != hallA.ID || got[0].Seats[0].Status != models.Free ||
-		got[0].Seats[0].Price != 100 {
+		got[0].Seats[0].HallId != hallA.ID || got[0].Seats[0].Price != 100 {
 		t.Errorf("GetAllWithDetails()[0].Seats[0] = %+v", got[0].Seats[0])
 	}
-	if got[0].Seats[1].ID != seat2.ID || got[0].Seats[1].Status != models.Holding || got[0].Seats[1].Price != 150 {
+	if got[0].Seats[1].ID != seat2.ID || got[0].Seats[1].SeatNumber != 2 || got[0].Seats[1].Price != 150 {
 		t.Errorf("GetAllWithDetails()[0].Seats[1] = %+v", got[0].Seats[1])
 	}
+	if len(got[0].Screenings) != 1 {
+		t.Fatalf("GetAllWithDetails()[0].Screenings has %d screenings, want 1", len(got[0].Screenings))
+	}
+	if got[0].Screenings[0].ID != screening.ID || got[0].Screenings[0].ShowId != show.ID {
+		t.Errorf("GetAllWithDetails()[0].Screenings[0] = %+v", got[0].Screenings[0])
+	}
+	if got[0].Screenings[0].Show == nil || got[0].Screenings[0].Show.Name != "Hamlet" {
+		t.Errorf("GetAllWithDetails()[0].Screenings[0].Show = %+v, want Hamlet", got[0].Screenings[0].Show)
+	}
 
-	// Hall B: no seats.
+	// Hall B: no seats or screenings.
 	if got[1].ID != hallB.ID {
 		t.Fatalf("GetAllWithDetails()[1].ID = %d, want %d", got[1].ID, hallB.ID)
 	}
 	if len(got[1].Seats) != 0 {
 		t.Errorf("GetAllWithDetails()[1].Seats has %d seats, want 0", len(got[1].Seats))
+	}
+	if len(got[1].Screenings) != 0 {
+		t.Errorf("GetAllWithDetails()[1].Screenings has %d screenings, want 0", len(got[1].Screenings))
 	}
 }

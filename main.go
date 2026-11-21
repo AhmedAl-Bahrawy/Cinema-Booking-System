@@ -50,10 +50,11 @@ func main() {
 	hallRep := models.NewHallRepository(pool)
 	seatRep := models.NewSeatRepository(pool)
 	showRep := models.NewShowRepository(pool)
+	screeningRep := models.NewScreeningRepository(pool)
 	ticketRep := models.NewTicketRepository(pool)
 	userRep := models.NewUserRepository(pool)
 
-	h := handlers.NewHandler(hallRep, seatRep, showRep, ticketRep, userRep)
+	h := handlers.NewHandler(hallRep, seatRep, showRep, screeningRep, ticketRep, userRep)
 
 	r := router.SetupRouter(h)
 

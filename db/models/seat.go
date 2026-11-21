@@ -8,25 +8,26 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Free (0) | Holding (1) | Booked (2)
-type BookingStatus int8
-
-const (
-	Free    BookingStatus = iota // 0
-	Holding                      // 1
-	Booked                       // 2
-)
-
+// Seat is a physical seat inside a hall.
+//
+// It deliberately has no user and no booking status: a seat is not "owned" by
+// anybody. Who sits in it depends on the screening, and that relationship lives
+// on Ticket. This lets the same seat be used by different users for different
+// screenings, even on the same day.
 type Seat struct {
-	ID         int64         `db:"id"          json:"id"          binding:"omitempty,min=1"`
-	UserId     int64         `db:"user_id"     json:"user_id"     binding:"omitempty,min=1"` // null until the seat is held/booked
-	HallId     int64         `db:"hall_id"     json:"hall_id"     binding:"required,min=1"`
-	SeatNumber uint32        `db:"seat_number" json:"seat_number" binding:"required,min=1"`
-	Status     BookingStatus `db:"status"      json:"status"      binding:"oneof=0 1 2"`
-	Price      uint32        `db:"price"       json:"price"       binding:"gte=0"` // 0 allowed (free seat)
+	ID         int64  `db:"id"          json:"id"          binding:"omitempty,min=1"`
+	HallId     int64  `db:"hall_id"     json:"hall_id"     binding:"required,min=1"`
+	SeatNumber uint32 `db:"seat_number" json:"seat_number" binding:"required,min=1"`
+	Price      uint32 `db:"price"       json:"price"       binding:"gte=0"` // 0 allowed (free seat)
 
-	User *User `db:"-" json:"user,omitempty" binding:"-"`
+	// Joined relation: filled manually after a JOIN query, never scanned directly.
 	Hall *Hall `db:"-" json:"hall,omitempty" binding:"-"`
+}
+
+type SeatReq struct {
+	HallId     int64  `db:"hall_id"     json:"hall_id"     binding:"required,min=1"`
+	SeatNumber uint32 `db:"seat_number" json:"seat_number" binding:"required,min=1"`
+	Price      uint32 `db:"price"       json:"price"       binding:"gte=0"` // 0 allowed (free seat)
 }
 
 type SeatRepository struct {
@@ -37,27 +38,15 @@ func NewSeatRepository(db *pgxpool.Pool) *SeatRepository {
 	return &SeatRepository{db: db}
 }
 
-// Create inserts a seat. Pass userId = 0 for a free seat (no user yet);
-// any other value links the seat to that user (holding/booked).
-func (r *SeatRepository) Create(ctx context.Context, userId, hallId int64, seatNumber uint32, status BookingStatus, price uint32) (*Seat, error) {
-	query := `INSERT INTO seats (user_id, hall_id, seat_number, status, price) VALUES ($1, $2, $3, $4, $5) RETURNING id, user_id, hall_id, seat_number, status, price`
-
-	// user_id is NULLABLE: 0 means "no user", which must be stored as NULL.
-	var userIdArg any
-	if userId != 0 {
-		userIdArg = userId
-	}
+func (r *SeatRepository) Create(ctx context.Context, hallId int64, seatNumber uint32, price uint32) (*Seat, error) {
+	query := `INSERT INTO seats (hall_id, seat_number, price) VALUES ($1, $2, $3) RETURNING id, hall_id, seat_number, price`
 
 	var seat Seat
-	var dbUserId *int64 // NULL until the seat is held/booked
 	var dbSeatNumber, dbPrice int64
-	err := r.db.QueryRow(ctx, query, userIdArg, hallId, seatNumber, status, price).
-		Scan(&seat.ID, &dbUserId, &seat.HallId, &dbSeatNumber, &seat.Status, &dbPrice)
+	err := r.db.QueryRow(ctx, query, hallId, seatNumber, price).
+		Scan(&seat.ID, &seat.HallId, &dbSeatNumber, &dbPrice)
 	if err != nil {
 		return nil, err
-	}
-	if dbUserId != nil {
-		seat.UserId = *dbUserId
 	}
 	seat.SeatNumber = uint32(dbSeatNumber)
 	seat.Price = uint32(dbPrice)
@@ -66,18 +55,14 @@ func (r *SeatRepository) Create(ctx context.Context, userId, hallId int64, seatN
 }
 
 func (r *SeatRepository) GetById(ctx context.Context, id int64) (*Seat, error) {
-	query := `SELECT id, user_id, hall_id, seat_number, status, price FROM seats WHERE id = $1`
+	query := `SELECT id, hall_id, seat_number, price FROM seats WHERE id = $1`
 
 	var seat Seat
-	var dbUserId *int64 // NULL until the seat is held/booked
 	var dbSeatNumber, dbPrice int64
 	err := r.db.QueryRow(ctx, query, id).
-		Scan(&seat.ID, &dbUserId, &seat.HallId, &dbSeatNumber, &seat.Status, &dbPrice)
+		Scan(&seat.ID, &seat.HallId, &dbSeatNumber, &dbPrice)
 	if err != nil {
 		return nil, err
-	}
-	if dbUserId != nil {
-		seat.UserId = *dbUserId
 	}
 	seat.SeatNumber = uint32(dbSeatNumber)
 	seat.Price = uint32(dbPrice)
@@ -86,7 +71,7 @@ func (r *SeatRepository) GetById(ctx context.Context, id int64) (*Seat, error) {
 }
 
 func (r *SeatRepository) GetAll(ctx context.Context) ([]*Seat, error) {
-	query := `SELECT id, user_id, hall_id, seat_number, status, price FROM seats ORDER BY id`
+	query := `SELECT id, hall_id, seat_number, price FROM seats ORDER BY id`
 
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
@@ -95,15 +80,11 @@ func (r *SeatRepository) GetAll(ctx context.Context) ([]*Seat, error) {
 
 	seats, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (*Seat, error) {
 		var seat Seat
-		var dbUserId *int64 // NULL until the seat is held/booked
 		var dbSeatNumber, dbPrice int64
 
-		err := row.Scan(&seat.ID, &dbUserId, &seat.HallId, &dbSeatNumber, &seat.Status, &dbPrice)
+		err := row.Scan(&seat.ID, &seat.HallId, &dbSeatNumber, &dbPrice)
 		if err != nil {
 			return nil, err
-		}
-		if dbUserId != nil {
-			seat.UserId = *dbUserId
 		}
 		seat.SeatNumber = uint32(dbSeatNumber)
 		seat.Price = uint32(dbPrice)
@@ -117,17 +98,14 @@ func (r *SeatRepository) GetAll(ctx context.Context) ([]*Seat, error) {
 	return seats, nil
 }
 
-// GetWithDetails returns the seat with its Hall (and User, if any) filled
-// in from a JOIN query. A free seat has no user, so User stays nil for it.
+// GetWithDetails returns the seat with the Hall it physically belongs to.
 func (r *SeatRepository) GetWithDetails(ctx context.Context, id int64) (*Seat, error) {
 	query := `
 	SELECT
-	    s.id, s.user_id, s.hall_id, s.seat_number, s.status, s.price,
-	    h.id, h.name, h.capacity,
-	    u.id, u.username, u.full_name
+	    s.id, s.hall_id, s.seat_number, s.price,
+	    h.id, h.name, h.capacity
 	FROM seats s
 	JOIN halls h ON h.id = s.hall_id
-	LEFT JOIN users u ON u.id = s.user_id
 	WHERE s.id = $1`
 
 	rows, err := r.db.Query(ctx, query, id)
@@ -136,7 +114,7 @@ func (r *SeatRepository) GetWithDetails(ctx context.Context, id int64) (*Seat, e
 	}
 
 	seat, err := pgx.CollectOneRow(rows, func(row pgx.CollectableRow) (*Seat, error) {
-		return scanSeatWithDetails(row)
+		return scanSeatWithHall(row)
 	})
 	if err != nil {
 		return nil, err
@@ -145,17 +123,14 @@ func (r *SeatRepository) GetWithDetails(ctx context.Context, id int64) (*Seat, e
 	return seat, nil
 }
 
-// GetAllWithDetails returns every seat with its Hall (and User, if any)
-// filled in from a JOIN query. Free seats have no user, so User stays nil.
+// GetAllWithDetails returns every seat with the Hall it belongs to.
 func (r *SeatRepository) GetAllWithDetails(ctx context.Context) ([]*Seat, error) {
 	query := `
 	SELECT
-	    s.id, s.user_id, s.hall_id, s.seat_number, s.status, s.price,
-	    h.id, h.name, h.capacity,
-	    u.id, u.username, u.full_name
+	    s.id, s.hall_id, s.seat_number, s.price,
+	    h.id, h.name, h.capacity
 	FROM seats s
 	JOIN halls h ON h.id = s.hall_id
-	LEFT JOIN users u ON u.id = s.user_id
 	ORDER BY s.id`
 
 	rows, err := r.db.Query(ctx, query)
@@ -164,7 +139,7 @@ func (r *SeatRepository) GetAllWithDetails(ctx context.Context) ([]*Seat, error)
 	}
 
 	seats, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (*Seat, error) {
-		return scanSeatWithDetails(row)
+		return scanSeatWithHall(row)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("collect seats with details: %w", err)
@@ -173,28 +148,50 @@ func (r *SeatRepository) GetAllWithDetails(ctx context.Context) ([]*Seat, error)
 	return seats, nil
 }
 
-// scanSeatWithDetails scans one seat + hall + (optional) user row.
-func scanSeatWithDetails(row pgx.CollectableRow) (*Seat, error) {
+// GetByHall returns the physical seats of one hall (plain rows, no JOINs).
+func (r *SeatRepository) GetByHall(ctx context.Context, hallId int64) ([]*Seat, error) {
+	query := `SELECT id, hall_id, seat_number, price FROM seats WHERE hall_id = $1 ORDER BY seat_number`
+
+	rows, err := r.db.Query(ctx, query, hallId)
+	if err != nil {
+		return nil, fmt.Errorf("query seats by hall: %w", err)
+	}
+
+	seats, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (*Seat, error) {
+		var seat Seat
+		var dbSeatNumber, dbPrice int64
+
+		err := row.Scan(&seat.ID, &seat.HallId, &dbSeatNumber, &dbPrice)
+		if err != nil {
+			return nil, err
+		}
+		seat.SeatNumber = uint32(dbSeatNumber)
+		seat.Price = uint32(dbPrice)
+
+		return &seat, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("collect seats by hall: %w", err)
+	}
+
+	return seats, nil
+}
+
+// scanSeatWithHall scans one seat + hall row.
+func scanSeatWithHall(row pgx.CollectableRow) (*Seat, error) {
 	var seat Seat
 	hall := Hall{}
 
-	var dbUserId, dbJoinUserId *int64  // NULL for a free seat
-	var dbUsername, dbFullName *string // NULL for a free seat
 	var dbSeatNumber, dbPrice, dbCapacity int64
 
 	err := row.Scan(
-		&seat.ID, &dbUserId, &seat.HallId, &dbSeatNumber, &seat.Status, &dbPrice,
+		&seat.ID, &seat.HallId, &dbSeatNumber, &dbPrice,
 		&hall.ID, &hall.Name, &dbCapacity,
-		&dbJoinUserId, &dbUsername, &dbFullName,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	if dbUserId != nil {
-		seat.UserId = *dbUserId
-		seat.User = &User{ID: *dbUserId, Username: *dbUsername, FullName: *dbFullName}
-	}
 	seat.SeatNumber = uint32(dbSeatNumber)
 	seat.Price = uint32(dbPrice)
 	hall.Capacity = uint32(dbCapacity)

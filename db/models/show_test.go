@@ -3,6 +3,7 @@ package models_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/AhmedAl-Bahrawy/Cinema-Booking-System/db/models"
 	"github.com/AhmedAl-Bahrawy/Cinema-Booking-System/internal/testdb"
@@ -165,8 +166,6 @@ func TestGetAllShows(t *testing.T) {
 func TestGetAllShowsWithDetails(t *testing.T) {
 	pool := testdb.Setup(t)
 	showRepo := models.NewShowRepository(pool)
-	seatRepo := models.NewSeatRepository(pool)
-	ticketRepo := models.NewTicketRepository(pool)
 
 	show1, err := showRepo.Create(t.Context(), "Hamlet", 120, "Shakespeare")
 	if err != nil {
@@ -176,26 +175,15 @@ func TestGetAllShowsWithDetails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed second show: %v", err)
 	}
-	hall := seedHall(t, pool)
-
-	seat1, err := seatRepo.Create(t.Context(), 0, hall.ID, 1, models.Free, 100)
+	hallA := seedHall(t, pool)
+	hallB, err := models.NewHallRepository(pool).Create(t.Context(), "Hall B", 50)
 	if err != nil {
-		t.Fatalf("seed first seat: %v", err)
-	}
-	seat2, err := seatRepo.Create(t.Context(), 0, hall.ID, 2, models.Free, 100)
-	if err != nil {
-		t.Fatalf("seed second seat: %v", err)
+		t.Fatalf("seed second hall: %v", err)
 	}
 
-	// Show 1 has two tickets; Show 2 has none.
-	ticket1, err := ticketRepo.Create(t.Context(), seat1.ID, hall.ID, show1.ID)
-	if err != nil {
-		t.Fatalf("seed first ticket: %v", err)
-	}
-	ticket2, err := ticketRepo.Create(t.Context(), seat2.ID, hall.ID, show1.ID)
-	if err != nil {
-		t.Fatalf("seed second ticket: %v", err)
-	}
+	// Show 1 is scheduled twice (two halls); Show 2 has no screenings.
+	screening1 := seedScreening(t, pool, hallA.ID, show1.ID, screeningBase)
+	screening2 := seedScreening(t, pool, hallB.ID, show1.ID, screeningBase.Add(24*time.Hour))
 
 	got, err := showRepo.GetAllWithDetails(t.Context())
 	if err != nil {
@@ -205,26 +193,28 @@ func TestGetAllShowsWithDetails(t *testing.T) {
 		t.Fatalf("GetAllWithDetails() returned %d shows, want 2", len(got))
 	}
 
-	// Show 1: two tickets attached.
+	// Show 1: two screenings attached.
 	if got[0].ID != show1.ID {
 		t.Fatalf("GetAllWithDetails()[0].ID = %d, want %d", got[0].ID, show1.ID)
 	}
-	if len(got[0].Tickets) != 2 {
-		t.Fatalf("GetAllWithDetails()[0].Tickets has %d tickets, want 2", len(got[0].Tickets))
+	if len(got[0].Screenings) != 2 {
+		t.Fatalf("GetAllWithDetails()[0].Screenings has %d screenings, want 2", len(got[0].Screenings))
 	}
-	if got[0].Tickets[0].ID != ticket1.ID || got[0].Tickets[0].SeatId != seat1.ID ||
-		got[0].Tickets[0].HallId != hall.ID || got[0].Tickets[0].ShowId != show1.ID {
-		t.Errorf("GetAllWithDetails()[0].Tickets[0] = %+v", got[0].Tickets[0])
+	if got[0].Screenings[0].ID != screening1.ID || got[0].Screenings[0].HallId != hallA.ID {
+		t.Errorf("GetAllWithDetails()[0].Screenings[0] = %+v", got[0].Screenings[0])
 	}
-	if got[0].Tickets[1].ID != ticket2.ID || got[0].Tickets[1].SeatId != seat2.ID {
-		t.Errorf("GetAllWithDetails()[0].Tickets[1] = %+v", got[0].Tickets[1])
+	if got[0].Screenings[0].Hall == nil || got[0].Screenings[0].Hall.Name != "Hall A" {
+		t.Errorf("GetAllWithDetails()[0].Screenings[0].Hall = %+v, want Hall A", got[0].Screenings[0].Hall)
+	}
+	if got[0].Screenings[1].ID != screening2.ID || got[0].Screenings[1].HallId != hallB.ID {
+		t.Errorf("GetAllWithDetails()[0].Screenings[1] = %+v", got[0].Screenings[1])
 	}
 
-	// Show 2: no tickets.
+	// Show 2: no screenings.
 	if got[1].ID != show2.ID {
 		t.Fatalf("GetAllWithDetails()[1].ID = %d, want %d", got[1].ID, show2.ID)
 	}
-	if len(got[1].Tickets) != 0 {
-		t.Errorf("GetAllWithDetails()[1].Tickets has %d tickets, want 0", len(got[1].Tickets))
+	if len(got[1].Screenings) != 0 {
+		t.Errorf("GetAllWithDetails()[1].Screenings has %d screenings, want 0", len(got[1].Screenings))
 	}
 }
